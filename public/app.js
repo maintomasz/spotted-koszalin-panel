@@ -83,6 +83,7 @@ document.getElementById('tabs').addEventListener('click', (e) => {
   tab = b.dataset.tab;
   for (const x of document.querySelectorAll('#tabs button')) x.classList.toggle('active', x === b);
   cards.clear();
+  threadCards.clear();
   main.innerHTML = '';
   render();
 });
@@ -90,6 +91,7 @@ document.getElementById('tabs').addEventListener('click', (e) => {
 async function render() {
   try {
     if (tab === 'settings') return renderSettings();
+    if (tab === 'conversations') return renderThreads(await api('/api/threads'));
     const items = await api(`/api/submissions?status=${tab}`);
     if (isInboxTab()) return renderInbox(items);
     return renderList(items);
@@ -172,6 +174,7 @@ function fillCard(c, s) {
     ${s.ai_status === 'error' ? `<div class="error-text">${esc(s.ai_error)}</div>` : ''}
     ${issues.length ? `<div class="chips">${issues.map((i) =>
       `<span class="chip sev-${esc(i.severity)}" title="${esc(i.description)}">${esc(ISSUE[i.type] || i.type)}</span>`).join('')}</div>` : ''}
+    ${String(s.flags || '').includes('author_edit') ? '<div class="notice">⚠️ Autor dopisał coś, gdy post czekał w kolejce – publikacja wstrzymana. Sprawdź tekst i zatwierdź ponownie.</div>' : ''}
     ${s.has_video ? '<div class="notice">🎬 Jest wideo – obejrzyj w skrzynce FB, wrzuć ręcznie i daj ⋯ → „Obsłużone ręcznie”.</div>' : ''}
     ${otherAtt.length ? `<div class="notice info">Inne załączniki (${otherAtt.map((a) => esc(a.type)).join(', ')}) – sprawdź w skrzynce FB.</div>` : ''}
     ${images.length ? `<div class="thumbs-row">${images.map((img, i) => {
@@ -317,6 +320,157 @@ function removeCard(id) {
   refreshStatus();
 }
 
+// ---------- Rozmowy (wątki) ----------
+const REASON = {
+  conversation: '💬 Rozmowa', after_published: '💬 Pytanie po publikacji', after_rejected: '💬 Pytanie po odrzuceniu',
+  after_commercial: '💬 Po ofercie reklamy', after_handled: '💬 Pytanie',
+};
+const STATUS_LABEL = {
+  published: '✅ opublikowane', rejected: '⛔ odrzucone', commercial: '💰 komercyjne', handled: '✋ obsłużone',
+  queued: '🕒 w kolejce', new: '⏳ czeka na decyzję', conversation: '💬 rozmowa', failed: '⚠️ błąd publikacji',
+};
+const KIND_LABEL = { auto_published: '🤖 podziękowanie po publikacji', auto_reject: '🤖 odrzucenie', auto_commercial: '🤖 oferta reklamy', system: '⚙️', reply: '' };
+const threadCards = new Map();
+
+function postLink(sub) {
+  return sub?.fb_post_id && !String(sub.fb_post_id).startsWith('DEMO')
+    ? `<a href="https://www.facebook.com/${esc(sub.fb_post_id)}" target="_blank" rel="noopener">zobacz post ↗</a>` : '';
+}
+
+function renderThreads(items) {
+  if (!items.length) {
+    threadCards.clear();
+    main.innerHTML = `<div class="empty">Brak otwartych rozmów 💬<br><small>Tu trafiają pytania do admina i prośby po publikacji lub odrzuceniu. Podziękowania („dzięki”, 👍) nie trafiają nigdzie.</small></div>`;
+    return;
+  }
+  $('.empty', main)?.remove();
+  const ids = new Set(items.map((t) => t.sender_id));
+  for (const [id, c] of threadCards) if (!ids.has(id)) { c.el.remove(); threadCards.delete(id); }
+  let prev = null;
+  for (const t of items) {
+    const sig = `${t.updated_at}|${t.history.length}`;
+    let c = threadCards.get(t.sender_id);
+    if (!c) {
+      c = { el: document.createElement('div'), sig: null };
+      c.el.className = 'card thread';
+      threadCards.set(t.sender_id, c);
+    }
+    const typing = $('.reply', c.el)?.value.trim() || $('.sub-slot', c.el)?.innerHTML;
+    if (c.sig !== sig && !typing) { fillThread(c, t); c.sig = sig; }
+    if (prev) prev.after(c.el); else main.prepend(c.el);
+    prev = c.el;
+  }
+}
+
+function bubble(m) {
+  const imgs = (m.attachments || []).filter((a) => a.type === 'image' && a.file);
+  const other = (m.attachments || []).filter((a) => a.type !== 'image');
+  const label = m.direction === 'out' && KIND_LABEL[m.kind] ? `<div class="b-label">${KIND_LABEL[m.kind]}</div>` : '';
+  return `<div class="b ${m.direction === 'out' ? 'out' : 'in'}">
+    ${label}
+    ${m.text ? `<div class="b-text">${esc(m.text)}</div>` : ''}
+    ${imgs.length ? `<div class="b-imgs">${imgs.map((a) => `<img src="/media/${esc(a.file)}" data-act="zoom" data-src="/media/${esc(a.file)}" alt="">`).join('')}</div>` : ''}
+    ${other.length ? `<div class="b-text muted">${other.map((a) => (a.type === 'sticker' ? '👍' : `[${esc(a.type)}]`)).join(' ')}</div>` : ''}
+    <div class="b-time">${fmtShort(m.created_at)}</div>
+  </div>`;
+}
+
+function fillThread(c, t) {
+  const el = c.el;
+  const sub = t.submission;
+  const canReply = t.last_in_at && Date.now() - t.last_in_at < 24 * 3600 * 1000;
+  const left = t.last_in_at ? t.last_in_at + 24 * 3600 * 1000 - Date.now() : 0;
+  const timer = canReply
+    ? `<span class="timer${left < 3 * 3600000 ? ' late' : ''}">⏱ ${Math.floor(left / 3600000)}h</span>`
+    : '<span class="timer late">⏱ po 24h</span>';
+  el.innerHTML = `
+    <div class="top">
+      <span class="badge v-conversation">${REASON[t.reason] || '💬 Rozmowa'}</span>
+      <span class="meta-r">${esc(t.sender_name || 'Użytkownik FB')} · ${t.last_in_at ? fmtShort(t.last_in_at) : ''} ${timer}</span>
+    </div>
+    ${t.summary ? `<div class="summary">🤖 ${esc(t.summary.replace(/^\[DEMO[^\]]*\]\s*/, ''))}</div>` : ''}
+    ${sub && sub.status !== 'conversation' ? `<div class="ctx">Dotyczy zgłoszenia: <b>${STATUS_LABEL[sub.status] || esc(sub.status)}</b> ${postLink(sub)}
+      <div class="ctx-text">${esc((sub.final_text || sub.original_text || '').slice(0, 160))}${(sub.final_text || sub.original_text || '').length > 160 ? '…' : ''}</div></div>` : ''}
+    <div class="chat">${t.history.map(bubble).join('')}</div>
+    ${canReply ? '<textarea class="reply" rows="2" placeholder="Napisz odpowiedź…"></textarea>' : '<div class="notice info">Minęło 24 h od ostatniej wiadomości – Facebook pozwala odpisać już tylko ze skrzynki strony.</div>'}
+    <div class="decide">
+      ${canReply ? '<button class="btn primary grow" data-act="send">📤 Wyślij</button>' : `<a class="btn primary grow" href="${inboxUrl()}" target="_blank" rel="noopener">💬 Odpowiedz w skrzynce</a>`}
+      <button class="btn" data-act="close" title="Sprawa załatwiona">✅ Zamknij</button>
+      <button class="btn icon" data-act="more" title="Więcej opcji">⋯</button>
+    </div>
+    <div class="sub-slot"></div>`;
+  const chat = $('.chat', el);
+  requestAnimationFrame(() => { chat.scrollTop = chat.scrollHeight; }); // po wstawieniu karty na stronę
+  const ta = $('.reply', el);
+  if (ta) ta.addEventListener('input', () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 2 + 'px'; });
+  const slot = $('.sub-slot', el);
+  const psid = encodeURIComponent(t.sender_id);
+
+  el.onclick = async (e) => {
+    const a = e.target.closest('[data-act]');
+    if (!a) return;
+    const act = a.dataset.act;
+    if (act === 'zoom') return lightbox(a.dataset.src);
+    if (act === 'send') {
+      return act1(a, async () => {
+        await api(`/api/threads/${psid}/reply`, { body: { text: ta.value } });
+        ta.value = '';
+        toast('📤 Wysłano');
+        c.sig = null;
+        tick();
+      });
+    }
+    if (act === 'close') {
+      return act1(a, async () => {
+        await api(`/api/threads/${psid}/close`, { body: {} });
+        c.el.remove(); threadCards.delete(t.sender_id);
+        if (!threadCards.size) render();
+        refreshStatus();
+        const tt = $('#toast');
+        toast('✅ Rozmowa zamknięta');
+        const b = document.createElement('button');
+        b.textContent = 'Cofnij';
+        b.onclick = async () => { tt.classList.remove('show'); await api(`/api/threads/${psid}/reopen`, { body: {} }); tick(); };
+        tt.appendChild(b); tt.classList.add('has-action');
+      });
+    }
+    if (act === 'more') {
+      if (slot.innerHTML) { slot.innerHTML = ''; return; }
+      slot.innerHTML = `<div class="sub-panel menu">
+        <a class="btn" href="${inboxUrl()}" target="_blank" rel="noopener">💬 Otwórz w skrzynce Facebooka</a>
+        ${sub?.status === 'published' ? '<button class="btn" data-act="edit-pub">✏️ Popraw opublikowany post</button>' : ''}
+        <button class="btn" data-act="to-post">📝 To jednak post – przenieś do decyzji</button></div>`;
+      return;
+    }
+    if (act === 'edit-pub') {
+      slot.innerHTML = `<div class="sub-panel">
+        <div class="label"><span>Treść opublikowanego posta – po zapisaniu zmieni się na Facebooku</span></div>
+        <textarea class="msg">${esc(sub.final_text || '')}</textarea>
+        <div class="row"><button class="btn primary grow" data-act="edit-pub-go">💾 Zapisz poprawkę</button><button class="btn" data-act="cancel">Anuluj</button></div></div>`;
+      return;
+    }
+    if (act === 'edit-pub-go') {
+      return act1(a, async () => {
+        await api(`/api/submissions/${sub.id}/edit-published`, { body: { text: $('.msg', slot).value } });
+        slot.innerHTML = '';
+        toast('✏️ Post poprawiony na Facebooku');
+        c.sig = null;
+        tick();
+      });
+    }
+    if (act === 'to-post') {
+      return act1(a, async () => {
+        await api(`/api/threads/${psid}/to-post`, { body: {} });
+        c.el.remove(); threadCards.delete(t.sender_id);
+        if (!threadCards.size) render();
+        refreshStatus();
+        toast('📝 Przeniesiono do „Do decyzji”');
+      });
+    }
+    if (act === 'cancel') slot.innerHTML = '';
+  };
+}
+
 // ---------- Pozostałe listy ----------
 function renderList(items) {
   const head = tab === 'queued' && settingsCache
@@ -334,6 +488,23 @@ function renderList(items) {
     if (!a) return;
     const id = a.closest('[data-id]').dataset.id;
     const map = { restore: 'restore', now: 'publish-now' };
+    const card = a.closest('[data-id]');
+    if (a.dataset.act === 'edit-pub') {
+      const s = items.find((x) => String(x.id) === id);
+      $('.edit-slot', card).innerHTML = `<div class="sub-panel">
+        <div class="label"><span>Treść posta – po zapisaniu zmieni się na Facebooku</span></div>
+        <textarea class="msg">${esc(s.final_text || '')}</textarea>
+        <div class="row"><button class="btn primary grow" data-act="edit-pub-go">💾 Zapisz poprawkę</button><button class="btn" data-act="edit-cancel">Anuluj</button></div></div>`;
+      return;
+    }
+    if (a.dataset.act === 'edit-cancel') { $('.edit-slot', card).innerHTML = ''; return; }
+    if (a.dataset.act === 'edit-pub-go') {
+      return act1(a, async () => {
+        await api(`/api/submissions/${id}/edit-published`, { body: { text: $('.msg', card).value } });
+        toast('✏️ Post poprawiony na Facebooku');
+        render();
+      });
+    }
     await act1(a, async () => {
       if (a.dataset.act === 'retry') {
         const s = items.find((x) => String(x.id) === id);
@@ -358,6 +529,7 @@ function listCard(s) {
   } else if (tab === 'published') {
     const link = s.fb_post_id && !s.fb_post_id.startsWith('DEMO') ? `<a href="https://www.facebook.com/${esc(s.fb_post_id)}" target="_blank" rel="noopener">zobacz na FB ↗</a>` : '<span>(tryb demo – nie wysłano na FB)</span>';
     meta = `<span>Opublikowano ${fmt(s.published_at)}</span>${link}${s.reply_sent ? `<span>· ${esc(s.reply_sent)}</span>` : ''}`;
+    actions = '<button class="btn" data-act="edit-pub">✏️ Popraw post</button>';
   } else if (tab === 'failed') {
     meta = `<span class="error-text">${esc(s.publish_error)}</span>`;
     actions = `<button class="btn primary" data-act="retry">Ponów publikację</button><button class="btn" data-act="restore">↩︎ Cofnij do decyzji</button>`;
@@ -370,6 +542,7 @@ function listCard(s) {
     <div class="post-text">${esc(text || '(bez tekstu)')}</div>
     ${imgs.length ? `<div class="thumbs">${imgs.map((f) => `<img src="/media/${esc(f)}" alt="">`).join('')}</div>` : ''}
     ${actions ? `<div class="actions">${actions}</div>` : ''}
+    <div class="edit-slot"></div>
   </div>`;
 }
 

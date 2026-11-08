@@ -1,8 +1,10 @@
 // Kolejka: ocena AI w tle + publikowanie zatwierdzonych postów w odstępach czasu.
 import { db, getSubmission, updateSubmission, parseRow, deleteSubmissionsWhere } from './db.js';
 import { getSettings, fillPublishedTemplate } from './settings.js';
-import { analyzeSubmission } from './ai.js';
-import { fbEnabled, publishPost, sendMessage, getPermalink } from './facebook.js';
+import { analyzeSubmission, classifyFollowup } from './ai.js';
+import { fbEnabled, publishPost, getPermalink, getUserName } from './facebook.js';
+import { sendAndLog, upsertThread, getThread, recentDecision, deleteMessagesWhere } from './threads.js';
+import { createSubmission } from './inbox.js';
 
 const TZ = 'Europe/Warsaw';
 const MIN = 60 * 1000;
@@ -88,6 +90,11 @@ async function runAi() {
           ai_status: changed ? 'pending' : 'done', ai_result: result, ai_error: null,
           ai_cost_usd: (fresh.ai_cost_usd || 0) + cost,
         });
+        // Rozmowa z adminem, a nie post → przenosimy do „Rozmów” jako otwarty wątek.
+        if (!changed && result.verdict === 'conversation' && fresh.sender_id) {
+          updateSubmission(id, { status: 'conversation', decided_at: Date.now() });
+          openThread(fresh.sender_id, { reason: 'conversation', summary: result.summary, submission_id: id, last_in_at: fresh.last_user_message_at, sender_name: fresh.sender_name });
+        }
       } catch (err) {
         console.error(`[AI] zgłoszenie #${id}:`, err.message);
         updateSubmission(id, { ai_status: 'error', ai_error: String(err.message).slice(0, 500) });
@@ -103,12 +110,11 @@ async function notifyPublished(sub, postId) {
   const template = (getSettings().template_published || '').trim();
   if (!template) return null;
   if (sub.source !== 'facebook' || !sub.sender_id) return null;
-  if (!fbEnabled()) return 'DEMO – nie wysłano podziękowania';
   if (Date.now() - sub.last_user_message_at > 24 * 3600 * 1000) return 'nie wysłano podziękowania – minęło 24 h';
   try {
-    const link = await getPermalink(postId);
-    await sendMessage(sub.sender_id, fillPublishedTemplate(template, link));
-    return 'wysłano podziękowanie';
+    const link = fbEnabled() ? await getPermalink(postId) : `https://www.facebook.com/${postId}`;
+    const st = await sendAndLog(sub.sender_id, fillPublishedTemplate(template, link), { kind: 'auto_published', submissionId: sub.id });
+    return st === 'wysłano' ? 'wysłano podziękowanie' : 'DEMO – nie wysłano podziękowania';
   } catch (err) {
     console.error(`[Publikacja] #${sub.id} podziękowanie nie wysłane:`, err.message);
     return 'błąd podziękowania: ' + String(err.message).slice(0, 200);
@@ -141,11 +147,73 @@ async function runPublisher() {
   }
 }
 
+// Otwiera (albo ponownie otwiera) wątek rozmowy z osobą.
+function openThread(senderId, fields) {
+  const cur = getThread(senderId);
+  const name = fields.sender_name || cur?.sender_name
+    || db.prepare('SELECT sender_name FROM submissions WHERE sender_id = ? AND sender_name IS NOT NULL ORDER BY id DESC LIMIT 1').get(senderId)?.sender_name;
+  upsertThread(senderId, { ...fields, sender_name: name || null, state: 'open' });
+  if (!name) getUserName(senderId).then((n) => n && upsertThread(senderId, { sender_name: n }));
+}
+
+// Wiadomości, które przyszły ≤24 h po decyzji: po minucie ciszy AI decyduje – dzięki / pytanie / nowe zgłoszenie.
+let followupBusy = false;
+async function runFollowups() {
+  if (followupBusy) return;
+  followupBusy = true;
+  try {
+    const senders = db.prepare(`SELECT sender_id, MAX(created_at) AS last FROM messages WHERE pending = 1 GROUP BY sender_id
+      HAVING last < ?`).all(Date.now() - AI_DEBOUNCE_MS);
+    for (const { sender_id: senderId } of senders) {
+      const msgs = db.prepare('SELECT * FROM messages WHERE sender_id = ? AND pending = 1 ORDER BY created_at').all(senderId)
+        .map((m) => ({ ...m, attachments: JSON.parse(m.attachments || '[]') }));
+      if (!msgs.length) continue;
+      const text = msgs.map((m) => m.text).filter(Boolean).join('\n\n');
+      const atts = msgs.flatMap((m) => m.attachments).filter((a) => a.type !== 'sticker');
+      const decision = recentDecision(senderId) || (getThread(senderId)?.submission_id ? getSubmission(getThread(senderId).submission_id) : null);
+      let kind = 'question';
+      let summary = '';
+      try {
+        const { result } = await classifyFollowup({ newText: text, hasImages: atts.some((a) => a.type === 'image'), decision });
+        kind = result.kind;
+        summary = result.summary;
+      } catch (err) {
+        console.error('[Po decyzji] klasyfikacja nie powiodła się – traktuję jako pytanie:', err.message);
+        summary = 'AI nie oceniło – sprawdź wiadomość.';
+      }
+      const ids = msgs.map((m) => m.id);
+      const mark = (submissionId) => db.prepare(`UPDATE messages SET pending = 0${submissionId ? ', submission_id = ?' : ''} WHERE id IN (${ids.map(() => '?').join(',')})`)
+        .run(...(submissionId ? [submissionId] : []), ...ids);
+      if (kind === 'thanks') {
+        mark(null);
+        console.log(`[Po decyzji] podziękowanie – pominięto (bez wpisu w panelu)`);
+      } else if (kind === 'new_submission') {
+        const last = msgs[msgs.length - 1];
+        const id = createSubmission({ psid: senderId, text, attachments: atts, hasVideo: atts.some((a) => a.type === 'video'), ts: last.created_at });
+        mark(id);
+        console.log(`[Po decyzji] nowe zgłoszenie #${id}`);
+      } else {
+        mark(null);
+        const reasonBy = { published: 'after_published', rejected: 'after_rejected', commercial: 'after_commercial', handled: 'after_handled', conversation: 'conversation' };
+        openThread(senderId, {
+          reason: reasonBy[decision?.status] || 'conversation', summary, submission_id: decision?.id ?? null,
+          last_in_at: msgs[msgs.length - 1].created_at,
+        });
+        console.log(`[Po decyzji] pytanie – otwarto rozmowę`);
+      }
+    }
+  } finally {
+    followupBusy = false;
+  }
+}
+
 // Retencja (RODO): zgłoszenia starsze niż RETENTION_DAYS są trwale usuwane razem ze zdjęciami.
 const RETENTION_DAYS = Number(process.env.RETENTION_DAYS || 180);
 function runCleanup() {
   const cutoff = Date.now() - RETENTION_DAYS * 24 * 3600 * 1000;
   const n = deleteSubmissionsWhere("created_at < ? AND status NOT IN ('queued','publishing')", cutoff);
+  deleteMessagesWhere('created_at < ? AND pending = 0', cutoff);
+  db.prepare("DELETE FROM threads WHERE state = 'closed' AND updated_at < ?").run(cutoff);
   db.prepare('DELETE FROM processed_mids WHERE at < ?').run(Date.now() - 30 * 24 * 3600 * 1000);
   if (n) console.log(`[Retencja] usunięto ${n} zgłoszeń starszych niż ${RETENTION_DAYS} dni`);
 }
@@ -157,6 +225,13 @@ export function startWorkers() {
   db.prepare("UPDATE submissions SET ai_status = 'pending' WHERE ai_status = 'running'").run();
   // Publikacja przerwana restartem: nie ponawiamy automatycznie (ryzyko podwójnego posta) – do sprawdzenia ręcznie.
   db.prepare("UPDATE submissions SET status = 'failed', publish_error = 'Publikacja przerwana restartem serwera – sprawdź na Facebooku, czy post się pojawił.' WHERE status = 'publishing'").run();
+  // Migracja: stare karty „rozmowa” (status new + ocena conversation) → wątki.
+  for (const r of db.prepare("SELECT * FROM submissions WHERE status = 'new' AND json_extract(ai_result, '$.verdict') = 'conversation'").all().map(parseRow)) {
+    if (!r.sender_id) continue;
+    updateSubmission(r.id, { status: 'conversation', decided_at: Date.now() });
+    openThread(r.sender_id, { reason: 'conversation', summary: r.ai_result?.summary, submission_id: r.id, last_in_at: r.last_user_message_at, sender_name: r.sender_name });
+  }
   setInterval(() => runAi().catch((e) => console.error('[AI]', e)), 5000);
+  setInterval(() => runFollowups().catch((e) => console.error('[Po decyzji]', e)), 5000);
   setInterval(() => runPublisher().catch((e) => console.error('[Publikacja]', e)), 15000);
 }

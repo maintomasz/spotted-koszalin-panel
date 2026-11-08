@@ -7,8 +7,9 @@ import { fileURLToPath } from 'node:url';
 import { db, DATA_DIR, MEDIA_DIR, getSubmission, updateSubmission, parseRow } from './db.js';
 import { getSettings, saveSettings } from './settings.js';
 import { aiEnabled, AI_MODEL } from './ai.js';
-import { fbEnabled, verifySignature, sendMessage, saveMedia, diagnose } from './facebook.js';
-import { handleWebhook, addToInbox } from './inbox.js';
+import { fbEnabled, verifySignature, saveMedia, diagnose, editPost } from './facebook.js';
+import { listOpenThreads, getThread, upsertThread, sendAndLog, logMessage } from './threads.js';
+import { handleWebhook, addToInbox, createSubmission } from './inbox.js';
 import { nextSlot, reflowQueue, startWorkers } from './scheduler.js';
 import { seedDemo } from './demo-seed.js';
 
@@ -112,10 +113,8 @@ app.use(express.json({ limit: '40mb' }));
 app.use('/media', express.static(MEDIA_DIR, { maxAge: '7d' }));
 app.use(express.static(path.join(here, '..', 'public')));
 
-const IS_CONV = "json_extract(ai_result, '$.verdict') = 'conversation'";
 const LISTS = {
-  new: `status = 'new' AND NOT COALESCE(${IS_CONV}, 0) ORDER BY created_at ASC`,
-  conversations: `status = 'new' AND ${IS_CONV} ORDER BY created_at ASC`,
+  new: "status = 'new' ORDER BY created_at ASC",
   queued: "status IN ('queued','publishing') ORDER BY scheduled_at ASC",
   published: "status = 'published' ORDER BY published_at DESC LIMIT 100",
   failed: "status = 'failed' ORDER BY id DESC",
@@ -129,8 +128,11 @@ app.get('/api/status', (_req, res) => {
   res.json({
     fb: fbEnabled(), ai: aiEnabled(), model: AI_MODEL, pageId: process.env.FB_PAGE_ID || null,
     cost30d: cost.c, count30d: cost.n,
-    counts: Object.fromEntries(Object.keys(LISTS).map((k) => [k,
-      db.prepare(`SELECT COUNT(*) AS n FROM submissions WHERE ${LISTS[k].split(' ORDER BY')[0]}`).get().n])),
+    counts: {
+      ...Object.fromEntries(Object.keys(LISTS).map((k) => [k,
+        db.prepare(`SELECT COUNT(*) AS n FROM submissions WHERE ${LISTS[k].split(' ORDER BY')[0]}`).get().n])),
+      conversations: db.prepare("SELECT COUNT(*) AS n FROM threads WHERE state = 'open'").get().n,
+    },
   });
 });
 
@@ -149,11 +151,10 @@ function load(req, res, allowed) {
   return sub;
 }
 
-async function reply(sub, text) {
+async function reply(sub, text, kind = 'reply') {
   if (!text || !sub.sender_id || sub.source !== 'facebook') return 'pominięto (brak nadawcy z Facebooka)';
-  if (!fbEnabled()) return 'DEMO – nie wysłano (Facebook niepodłączony)';
-  await sendMessage(sub.sender_id, text);
-  return 'wysłano';
+  const st = await sendAndLog(sub.sender_id, text, { kind, submissionId: sub.id });
+  return st === 'wysłano' ? 'wysłano' : 'DEMO – nie wysłano (Facebook niepodłączony)';
 }
 
 app.post('/api/submissions/:id/approve', (req, res) => {
@@ -166,6 +167,7 @@ app.post('/api/submissions/:id/approve', (req, res) => {
   const when = req.body.now ? Date.now() : nextSlot();
   updateSubmission(sub.id, {
     status: 'queued', final_text: text, final_images: valid, scheduled_at: when, decided_at: Date.now(), publish_error: null,
+    flags: String(sub.flags || '').split(',').filter((f) => f && f !== 'author_edit').join(','),
   });
   res.json({ ok: true, scheduled_at: when });
 });
@@ -175,7 +177,7 @@ app.post('/api/submissions/:id/reject', async (req, res) => {
   if (!sub) return;
   let replyStatus = null;
   try {
-    if (req.body.message) replyStatus = await reply(sub, String(req.body.message));
+    if (req.body.message) replyStatus = await reply(sub, String(req.body.message), 'auto_reject');
   } catch (err) {
     replyStatus = 'błąd: ' + err.message;
   }
@@ -188,7 +190,7 @@ app.post('/api/submissions/:id/commercial', async (req, res) => {
   if (!sub) return;
   let replyStatus = null;
   try {
-    if (req.body.message) replyStatus = await reply(sub, String(req.body.message));
+    if (req.body.message) replyStatus = await reply(sub, String(req.body.message), 'auto_commercial');
   } catch (err) {
     return res.status(502).json({ error: 'Nie udało się wysłać wiadomości: ' + err.message });
   }
@@ -246,6 +248,87 @@ app.post('/api/test-message', (req, res) => {
   if (!text && !attachments.length) return res.status(400).json({ error: 'Wpisz tekst lub dodaj zdjęcie.' });
   const id = addToInbox({ psid: null, text, attachments, hasVideo: false, ts: Date.now(), source: 'test', senderName: 'Test z panelu' });
   res.json({ ok: true, id });
+});
+
+// ---------- Rozmowy (wątki) ----------
+app.get('/api/threads', (_req, res) => res.json(listOpenThreads()));
+
+function loadThread(req, res) {
+  const t = getThread(String(req.params.psid));
+  if (!t) { res.status(404).json({ error: 'Nie ma takiej rozmowy' }); return null; }
+  return t;
+}
+
+app.post('/api/threads/:psid/reply', async (req, res) => {
+  const t = loadThread(req, res);
+  if (!t) return;
+  const text = String(req.body.text || '').trim();
+  if (!text) return res.status(400).json({ error: 'Wpisz treść odpowiedzi.' });
+  if (!t.last_in_at || Date.now() - t.last_in_at > 24 * 3600 * 1000) {
+    return res.status(409).json({ error: 'Minęło 24 h od ostatniej wiadomości tej osoby – Facebook nie pozwala już odpisać z panelu. Odpowiedz ze skrzynki strony.' });
+  }
+  try {
+    const st = await sendAndLog(t.sender_id, text, { kind: 'reply', submissionId: t.submission_id });
+    upsertThread(t.sender_id, { last_out_at: Date.now() });
+    res.json({ ok: true, status: st });
+  } catch (err) {
+    res.status(502).json({ error: 'Nie udało się wysłać: ' + err.message });
+  }
+});
+
+app.post('/api/threads/:psid/close', (req, res) => {
+  const t = loadThread(req, res);
+  if (!t) return;
+  upsertThread(t.sender_id, { state: 'closed' });
+  res.json({ ok: true });
+});
+
+app.post('/api/threads/:psid/reopen', (req, res) => {
+  const t = loadThread(req, res);
+  if (!t) return;
+  upsertThread(t.sender_id, { state: 'open' });
+  res.json({ ok: true });
+});
+
+// „To jednak post” – zamienia rozmowę w zgłoszenie do decyzji.
+app.post('/api/threads/:psid/to-post', (req, res) => {
+  const t = loadThread(req, res);
+  if (!t) return;
+  const linked = t.submission_id ? getSubmission(t.submission_id) : null;
+  let id;
+  if (linked && linked.status === 'conversation') {
+    id = linked.id;
+    const ai = { ...(linked.ai_result || {}), verdict: 'manual_check' };
+    updateSubmission(id, { status: 'new', ai_result: ai, decided_at: null });
+  } else {
+    const since = linked ? Math.max(linked.decided_at || 0, linked.published_at || 0) : 0;
+    const msgs = db.prepare("SELECT * FROM messages WHERE sender_id = ? AND direction = 'in' AND created_at > ? ORDER BY created_at")
+      .all(t.sender_id, since).map((m) => ({ ...m, attachments: JSON.parse(m.attachments || '[]') }));
+    if (!msgs.length) return res.status(400).json({ error: 'Brak nowych wiadomości od tej osoby.' });
+    const atts = msgs.flatMap((m) => m.attachments).filter((a) => a.type !== 'sticker');
+    id = createSubmission({
+      psid: t.sender_id, text: msgs.map((m) => m.text).filter(Boolean).join('\n\n'), attachments: atts,
+      hasVideo: atts.some((a) => a.type === 'video'), ts: msgs[msgs.length - 1].created_at, senderName: t.sender_name,
+    });
+  }
+  upsertThread(t.sender_id, { state: 'closed', submission_id: id });
+  res.json({ ok: true, id });
+});
+
+// Poprawa treści już opublikowanego posta.
+app.post('/api/submissions/:id/edit-published', async (req, res) => {
+  const sub = load(req, res, ['published']);
+  if (!sub) return;
+  const text = String(req.body.text || '').trim();
+  if (!text) return res.status(400).json({ error: 'Treść nie może być pusta.' });
+  try {
+    if (fbEnabled() && !String(sub.fb_post_id).startsWith('DEMO')) await editPost(sub.fb_post_id, text);
+    updateSubmission(sub.id, { final_text: text });
+    if (sub.sender_id) logMessage({ senderId: sub.sender_id, submissionId: sub.id, direction: 'out', kind: 'system', text: `✏️ Poprawiono opublikowany post:\n${text}` });
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(502).json({ error: 'Facebook nie przyjął poprawki: ' + err.message });
+  }
 });
 
 app.get('/api/fb-check', async (_req, res) => {

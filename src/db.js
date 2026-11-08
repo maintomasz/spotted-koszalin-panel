@@ -39,7 +39,39 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_sub_sender ON submissions(sender_id, status);
   CREATE TABLE IF NOT EXISTS processed_mids (mid TEXT PRIMARY KEY, at INTEGER NOT NULL);
   CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+
+  -- Historia wiadomości z każdą osobą (przychodzące i wysłane przez nas) – do widoku rozmowy.
+  CREATE TABLE IF NOT EXISTS messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    sender_id TEXT NOT NULL,
+    submission_id INTEGER,
+    direction TEXT NOT NULL,                      -- in | out
+    kind TEXT NOT NULL DEFAULT 'user',            -- user | reply | auto_published | auto_reject | auto_commercial | system
+    text TEXT NOT NULL DEFAULT '',
+    attachments TEXT NOT NULL DEFAULT '[]',
+    pending INTEGER NOT NULL DEFAULT 0,           -- 1 = wiadomość po decyzji czekająca na klasyfikację AI
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS idx_msg_sender ON messages(sender_id, created_at);
+  CREATE INDEX IF NOT EXISTS idx_msg_pending ON messages(pending);
+
+  -- Wątek (rozmowa) z osobą: otwarty = czeka na odpowiedź admina, zamknięty = załatwione.
+  CREATE TABLE IF NOT EXISTS threads (
+    sender_id TEXT PRIMARY KEY,
+    sender_name TEXT,
+    state TEXT NOT NULL DEFAULT 'closed',         -- open | closed
+    reason TEXT,                                  -- conversation | after_published | after_rejected | after_commercial | ...
+    summary TEXT,
+    submission_id INTEGER,
+    last_in_at INTEGER,
+    last_out_at INTEGER,
+    updated_at INTEGER NOT NULL
+  );
 `);
+// Migracja: znaczniki na zgłoszeniu (np. „author_edit” – autor dopisał po zatwierdzeniu).
+if (!db.prepare('PRAGMA table_info(submissions)').all().some((c) => c.name === 'flags')) {
+  db.exec("ALTER TABLE submissions ADD COLUMN flags TEXT NOT NULL DEFAULT ''");
+}
 
 const JSON_FIELDS = ['attachments', 'ai_result', 'final_images'];
 

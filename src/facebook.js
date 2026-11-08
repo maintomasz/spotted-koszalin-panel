@@ -108,6 +108,11 @@ async function uploadPhoto(file, mime, { published, caption } = {}) {
   return graph('POST', `${PAGE_ID()}/photos`, { body: form });
 }
 
+// Poprawia treść już opublikowanego posta na stronie.
+export async function editPost(postId, text) {
+  return graph('POST', postId, { body: new URLSearchParams({ message: text }) });
+}
+
 // Stały link do opublikowanego posta (do wiadomości z podziękowaniem).
 export async function getPermalink(postId) {
   try {
