@@ -8,6 +8,7 @@ import { db, insertSubmission, getSubmission, updateSubmission, markMidProcessed
 import { downloadImage, getUserName } from './facebook.js';
 import { logMessage, getThread, upsertThread, recentDecision, sendAndLog, deleteEverythingAbout } from './threads.js';
 import { reflowQueue } from './scheduler.js';
+import { getSettings } from './settings.js';
 
 // Komenda RODO: „usuń moje dane” / „delete my data” – kasuje wszystkie dane nadawcy z panelu.
 const normalize = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ł/g, 'l')
@@ -95,6 +96,14 @@ export function routeIncoming({ psid, text, attachments, hasVideo, ts }) {
     reflowQueue();
     logMessage({ senderId: psid, submissionId: queued.id, direction: 'in', text, attachments, ts });
     return { route: 'held', submissionId: queued.id };
+  }
+
+  // Inteligentne rozmowy wyłączone → każda wiadomość od razu jako zgłoszenie do decyzji.
+  if (getSettings().smart_routing !== '1') {
+    if (onlySticker) return { route: 'ignored' };
+    const id = createSubmission({ psid, text, attachments: realAtts, hasVideo, ts });
+    logMessage({ senderId: psid, submissionId: id, direction: 'in', text, attachments, ts });
+    return { route: 'new', submissionId: id };
   }
 
   // 3) Trwająca (otwarta) rozmowa.

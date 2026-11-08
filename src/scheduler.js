@@ -9,7 +9,7 @@ import { createSubmission } from './inbox.js';
 const TZ = 'Europe/Warsaw';
 const MIN = 60 * 1000;
 // Ludzie często wysyłają tekst i zdjęcia w kilku osobnych wiadomościach – czekamy chwilę, aż skończą.
-const AI_DEBOUNCE_MS = Number(process.env.AI_DEBOUNCE_SECONDS || 60) * 1000;
+const AI_DEBOUNCE_MS = Number(process.env.AI_DEBOUNCE_SECONDS || 20) * 1000;
 
 function warsawMinutes(ts) {
   const parts = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
@@ -91,7 +91,7 @@ async function runAi() {
           ai_cost_usd: (fresh.ai_cost_usd || 0) + cost,
         });
         // Rozmowa z adminem, a nie post → przenosimy do „Rozmów” jako otwarty wątek.
-        if (!changed && result.verdict === 'conversation' && fresh.sender_id) {
+        if (!changed && result.verdict === 'conversation' && fresh.sender_id && getSettings().smart_routing === '1') {
           updateSubmission(id, { status: 'conversation', decided_at: Date.now() });
           openThread(fresh.sender_id, { reason: 'conversation', summary: result.summary, preset: result.suggested_preset || null, submission_id: id, last_in_at: fresh.last_user_message_at, sender_name: fresh.sender_name });
         }

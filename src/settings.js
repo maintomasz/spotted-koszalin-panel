@@ -23,6 +23,8 @@ Pozdrawiam, Spotted Koszalin
 
 Jeśli podoba Ci się nasza praca, możesz postawić nam kawę: https://buycoffee.to/spottedkoszalin ☕ Dzięki!`,
   presets: '', // JSON z listą szybkich odpowiedzi (pusty = domyślne, patrz DEFAULT_PRESETS)
+  // 1 = wiadomości po decyzji / w otwartej rozmowie idą do „Rozmów” (albo „dzięki” – nigdzie); 0 = wszystko do „Do decyzji”.
+  smart_routing: '0',
 };
 
 // Szybkie odpowiedzi: treść + wyzwalacz (kiedy AI ma zaproponować) + akcja po wysłaniu.

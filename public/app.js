@@ -208,12 +208,7 @@ function fillCard(c, s) {
     <div class="post" data-act="edit" title="Dotknij, aby edytować">${suggested ? esc(suggested) : '<i>(bez tekstu)</i>'}</div>
     <textarea class="post-edit" hidden>${esc(suggested)}</textarea>
     ${changed ? `<details class="orig"><summary>Oryginał (AI poprawiło tekst)</summary><div class="original">${esc(s.original_text || '(bez tekstu)')}</div><a data-act="use-original">↩︎ wstaw oryginał</a></details>` : ''}
-    ${verdict === 'conversation' ? `
-    <div class="decide">
-      <a class="btn primary grow" href="${inboxUrl()}" target="_blank" rel="noopener">💬 Odpowiedz</a>
-      <button class="btn" data-act="handled" title="Odpisałem – usuń z listy">✋ Obsłużone</button>
-      <button class="btn icon" data-act="more" title="Więcej opcji">⋯</button>
-    </div>` : `
+    ${`
     ${quickReplies(ai?.suggested_preset, 'preset')}
     <div class="actions6">
       <button class="btn primary" data-act="approve" title="Do kolejki publikacji"><span class="i">✅</span><span>Zatwierdź</span></button>
@@ -842,6 +837,13 @@ async function renderSettings() {
       </div>
     </div>
     <div class="card">
+      <h2>Rozmowy</h2>
+      <label class="row" style="display:flex;gap:10px;align-items:flex-start;cursor:pointer">
+        <input type="checkbox" id="smart" ${s.smart_routing === '1' ? 'checked' : ''} style="margin-top:4px">
+        <span><b>Inteligentne rozmowy</b><br><span class="stat">Włączone: wiadomości w ciągu 24 h po decyzji AI rozdziela samo – „dzięki” nigdzie nie trafia, pytania idą do „Rozmów”, a otwarta rozmowa zbiera kolejne wiadomości. Wyłączone: <b>każda wiadomość od razu trafia do „Do decyzji”</b>.</span></span>
+      </label>
+    </div>
+    <div class="card">
       <h2>Zasady strony dla AI</h2>
       <div class="stat">AI bierze je pod uwagę przy każdej ocenie. Pisz zwykłym językiem.</div>
       <textarea id="rules" style="min-height:200px">${esc(s.page_rules)}</textarea>
@@ -924,6 +926,7 @@ async function renderSettings() {
     settingsCache = await api('/api/settings', { method: 'PUT', body: {
       interval_minutes: $('#interval').value, quiet_from: $('#qfrom').value, quiet_to: $('#qto').value,
       page_rules: $('#rules').value,
+      smart_routing: $('#smart').checked ? '1' : '0',
       template_published: $('#tpub').value,
       presets: [...document.querySelectorAll('#presets .preset')].map((el) => ({
         id: el.dataset.id, name: $('.p-name', el).value.trim(), action: $('.p-action', el).value,
