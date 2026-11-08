@@ -77,6 +77,13 @@ app.post('/webhook', express.raw({ type: '*/*', limit: '5mb' }), (req, res) => {
 
 app.get('/health', (_req, res) => res.json({ ok: true }));
 
+// ---------- Publiczne strony (wymagane przez Meta) ----------
+const PAGES_DIR = path.join(here, '..', 'public-pages');
+const publicPage = (file) => (_req, res) => res.sendFile(path.join(PAGES_DIR, file));
+app.get(['/polityka-prywatnosci', '/privacy'], publicPage('polityka-prywatnosci.html'));
+app.get(['/usuwanie-danych', '/data-deletion'], publicPage('usuwanie-danych.html'));
+app.get('/strony.css', publicPage('strony.css'));
+
 // ---------- Logowanie ----------
 app.get('/login', (_req, res) => res.sendFile(path.join(here, '..', 'public', 'login.html')));
 app.post('/login', express.urlencoded({ extended: false }), async (req, res) => {

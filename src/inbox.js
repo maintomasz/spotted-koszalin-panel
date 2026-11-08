@@ -1,6 +1,20 @@
 // Zamienia wiadomości z Messengera na „zgłoszenia” do moderacji.
-import { db, insertSubmission, getSubmission, updateSubmission, markMidProcessed } from './db.js';
-import { downloadImage, getUserName } from './facebook.js';
+import { db, insertSubmission, getSubmission, updateSubmission, markMidProcessed, deleteSubmissionsWhere } from './db.js';
+import { downloadImage, getUserName, sendMessage, fbEnabled } from './facebook.js';
+
+// Komenda RODO: „usuń moje dane” / „delete my data” – kasuje wszystkie dane nadawcy z panelu.
+const normalize = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ł/g, 'l')
+  .replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+const DELETE_COMMANDS = ['usun moje dane', 'delete my data'];
+
+async function handleDeleteRequest(psid) {
+  const n = deleteSubmissionsWhere('sender_id = ?', psid);
+  console.log(`[RODO] usunięto dane nadawcy (${n} zgłoszeń)`);
+  if (fbEnabled()) {
+    await sendMessage(psid, `Twoje dane zostały usunięte z naszego narzędzia do moderacji (usunięte zgłoszenia: ${n}). Jeśli chcesz też usunięcia konkretnego opublikowanego posta, napisz, o który chodzi. – Spotted Koszalin`)
+      .catch((e) => console.error('[RODO] nie wysłano potwierdzenia:', e.message));
+  }
+}
 
 // Kolejne wiadomości od tej samej osoby w tym oknie czasu doklejamy do jednego zgłoszenia.
 const MERGE_WINDOW_MS = 10 * 60 * 1000;
@@ -25,6 +39,7 @@ async function handleMessagingEvent(ev) {
   if (!psid || !msg.mid || !markMidProcessed(msg.mid)) return;
 
   const text = (msg.text || '').trim();
+  if (text && DELETE_COMMANDS.includes(normalize(text))) return handleDeleteRequest(psid);
   const attachments = [];
   let hasVideo = false;
   for (const a of msg.attachments || []) {

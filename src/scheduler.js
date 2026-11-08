@@ -1,5 +1,5 @@
 // Kolejka: ocena AI w tle + publikowanie zatwierdzonych postów w odstępach czasu.
-import { db, getSubmission, updateSubmission, parseRow } from './db.js';
+import { db, getSubmission, updateSubmission, parseRow, deleteSubmissionsWhere } from './db.js';
 import { getSettings } from './settings.js';
 import { analyzeSubmission } from './ai.js';
 import { fbEnabled, publishPost } from './facebook.js';
@@ -118,7 +118,18 @@ async function runPublisher() {
   }
 }
 
+// Retencja (RODO): zgłoszenia starsze niż RETENTION_DAYS są trwale usuwane razem ze zdjęciami.
+const RETENTION_DAYS = Number(process.env.RETENTION_DAYS || 180);
+function runCleanup() {
+  const cutoff = Date.now() - RETENTION_DAYS * 24 * 3600 * 1000;
+  const n = deleteSubmissionsWhere("created_at < ? AND status NOT IN ('queued','publishing')", cutoff);
+  db.prepare('DELETE FROM processed_mids WHERE at < ?').run(Date.now() - 30 * 24 * 3600 * 1000);
+  if (n) console.log(`[Retencja] usunięto ${n} zgłoszeń starszych niż ${RETENTION_DAYS} dni`);
+}
+
 export function startWorkers() {
+  runCleanup();
+  setInterval(runCleanup, 6 * 3600 * 1000);
   // Po restarcie serwera: dokończ przerwane oceny i publikacje.
   db.prepare("UPDATE submissions SET ai_status = 'pending' WHERE ai_status = 'running'").run();
   // Publikacja przerwana restartem: nie ponawiamy automatycznie (ryzyko podwójnego posta) – do sprawdzenia ręcznie.

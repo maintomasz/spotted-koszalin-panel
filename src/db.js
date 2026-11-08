@@ -82,6 +82,20 @@ export function insertSubmission(s) {
   return Number(r.lastInsertRowid);
 }
 
+// Trwale usuwa zgłoszenia wraz z plikami zdjęć. Zwraca liczbę usuniętych zgłoszeń.
+export function deleteSubmissionsWhere(whereSql, ...params) {
+  const rows = db.prepare(`SELECT id, attachments FROM submissions WHERE ${whereSql}`).all(...params);
+  for (const r of rows) {
+    let atts = [];
+    try { atts = JSON.parse(r.attachments || '[]'); } catch { /* ignore */ }
+    for (const a of atts) {
+      if (a.file) fs.rmSync(path.join(MEDIA_DIR, path.basename(a.file)), { force: true });
+    }
+    db.prepare('DELETE FROM submissions WHERE id = ?').run(r.id);
+  }
+  return rows.length;
+}
+
 // Jednorazowe przetworzenie wiadomości z Facebooka (FB czasem wysyła tę samą kilka razy).
 export function markMidProcessed(mid) {
   const r = db.prepare('INSERT OR IGNORE INTO processed_mids (mid, at) VALUES (?, ?)').run(mid, Date.now());
