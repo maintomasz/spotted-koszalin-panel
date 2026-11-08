@@ -1,63 +1,38 @@
 // Kolejka: ocena AI w tle + publikowanie zatwierdzonych postów w odstępach czasu.
 import { db, getSubmission, updateSubmission, parseRow, deleteSubmissionsWhere } from './db.js';
-import { getSettings, fillPublishedTemplate } from './settings.js';
+import { getSettings, fillPublishedTemplate, migrateSettings } from './settings.js';
 import { analyzeSubmission, classifyFollowup } from './ai.js';
 import { fbEnabled, publishPost, getPermalink, getUserName } from './facebook.js';
 import { sendAndLog, upsertThread, getThread, recentDecision, deleteMessagesWhere } from './threads.js';
 import { createSubmission } from './inbox.js';
 
-const TZ = 'Europe/Warsaw';
 const MIN = 60 * 1000;
 // Ludzie często wysyłają tekst i zdjęcia w kilku osobnych wiadomościach – czekamy chwilę, aż skończą.
 const AI_DEBOUNCE_MS = Number(process.env.AI_DEBOUNCE_SECONDS || 20) * 1000;
 
-function warsawMinutes(ts) {
-  const parts = new Intl.DateTimeFormat('en-GB', { timeZone: TZ, hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
-    .formatToParts(new Date(ts));
-  const h = Number(parts.find((p) => p.type === 'hour').value);
-  const m = Number(parts.find((p) => p.type === 'minute').value);
-  return h * 60 + m;
-}
-const toMin = (hhmm) => {
-  const [h, m] = String(hhmm || '0:0').split(':').map(Number);
-  return (h || 0) * 60 + (m || 0);
-};
-
-export function isQuiet(ts, settings) {
-  const from = toMin(settings.quiet_from);
-  const to = toMin(settings.quiet_to);
-  if (from === to) return false;
-  const now = warsawMinutes(ts);
-  return from < to ? now >= from && now < to : now >= from || now < to;
-}
-
-function skipQuiet(ts, settings) {
-  let t = ts;
-  for (let i = 0; i < 24 * 12 && isQuiet(t, settings); i++) t += 5 * MIN;
-  return t;
-}
+// Odstęp między postami (bez ciszy nocnej – posty wychodzą o każdej porze).
+const intervalMs = (settings) => Math.max(1, Number(settings.interval_minutes) || 5) * MIN;
 
 // Wyznacza godzinę publikacji dla nowo zatwierdzonego posta.
 export function nextSlot(settings = getSettings()) {
-  const interval = Math.max(1, Number(settings.interval_minutes) || 10) * MIN;
+  const interval = intervalMs(settings);
   const now = Date.now();
   const lastQueued = db.prepare("SELECT MAX(scheduled_at) AS t FROM submissions WHERE status IN ('queued','publishing')").get().t;
   const lastPublished = db.prepare("SELECT MAX(published_at) AS t FROM submissions WHERE status = 'published'").get().t;
   let slot = now + 30 * 1000;
   if (lastQueued) slot = Math.max(slot, lastQueued + interval);
   else if (lastPublished) slot = Math.max(slot, lastPublished + interval);
-  return skipQuiet(slot, settings);
+  return slot;
 }
 
 // Przelicza całą kolejkę od nowa (np. po wycofaniu posta lub zmianie odstępu).
 export function reflowQueue() {
   const settings = getSettings();
-  const interval = Math.max(1, Number(settings.interval_minutes) || 10) * MIN;
+  const interval = intervalMs(settings);
   const items = db.prepare("SELECT id FROM submissions WHERE status = 'queued' ORDER BY scheduled_at, id").all();
   const lastPublished = db.prepare("SELECT MAX(published_at) AS t FROM submissions WHERE status = 'published'").get().t;
   let slot = Math.max(Date.now() + 30 * 1000, lastPublished ? lastPublished + interval : 0);
   for (const { id } of items) {
-    slot = skipQuiet(slot, settings);
     updateSubmission(id, { scheduled_at: slot });
     slot += interval;
   }
@@ -223,6 +198,7 @@ function runCleanup() {
 }
 
 export function startWorkers() {
+  if (migrateSettings()) { reflowQueue(); console.log('[Ustawienia] odstęp 5 min, bez ciszy nocnej'); }
   runCleanup();
   setInterval(runCleanup, 6 * 3600 * 1000);
   // Po restarcie serwera: dokończ przerwane oceny i publikacje.

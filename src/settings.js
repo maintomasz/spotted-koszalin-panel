@@ -2,9 +2,7 @@
 import { db } from './db.js';
 
 export const DEFAULT_SETTINGS = {
-  interval_minutes: '10',
-  quiet_from: '23:00',
-  quiet_to: '07:00',
+  interval_minutes: '5',
   page_rules: `- Publikujemy lokalne sprawy Koszalina i okolic: pytania, prośby o polecenie, zgubione/znalezione, zwierzęta, ostrzeżenia, „spotted”, podziękowania, skargi na sprawy publiczne.
 - NIE publikujemy bezpłatnie: reklam firm i usług, promocji wydarzeń biletowanych, ofert pracy od firm, zbiórek bez wiarygodnego źródła.
 - Prywatne ogłoszenia drobne (sprzedam/kupię/oddam, mieszkania, praca dorywcza) odsyłamy na naszą grupę.
@@ -127,6 +125,18 @@ export function fillPublishedTemplate(template, link) {
   if (t.includes('{link}')) return t.replaceAll('{link}', link);
   const [first, ...rest] = t.split('\n');
   return [first, `Zobacz: ${link}`, ...rest].join('\n');
+}
+
+// Jednorazowe zmiany zapisanych ustawień (np. 2026-11-08: odstęp 5 min, bez ciszy nocnej).
+export function migrateSettings() {
+  const has = (k) => db.prepare('SELECT 1 FROM settings WHERE key = ?').get(k);
+  if (!has('migr_2026_11_interval5')) {
+    db.prepare("INSERT INTO settings (key, value) VALUES ('interval_minutes', '5') ON CONFLICT(key) DO UPDATE SET value = '5'").run();
+    db.prepare("DELETE FROM settings WHERE key IN ('quiet_from', 'quiet_to')").run();
+    db.prepare("INSERT INTO settings (key, value) VALUES ('migr_2026_11_interval5', '1')").run();
+    return true;
+  }
+  return false;
 }
 
 export function getSettings() {

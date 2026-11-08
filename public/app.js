@@ -852,7 +852,7 @@ async function renderPerson(psid) {
 // ---------- Pozostałe listy ----------
 function renderList(items) {
   const head = tab === 'queued' && settingsCache
-    ? `<div class="card stat">Odstęp między postami: <b>${esc(settingsCache.interval_minutes)} min</b> · cisza nocna: <b>${esc(settingsCache.quiet_from)}–${esc(settingsCache.quiet_to)}</b>
+    ? `<div class="card stat">Odstęp między postami: <b>${esc(settingsCache.interval_minutes)} min</b>
        <button class="ghost small" id="reflow" style="float:right">Przelicz kolejkę</button></div>`
     : tab === 'rejected' && items.length
       ? `<div class="card list-head"><span class="stat">Odrzucone i obsłużone: <b>${items.length}</b> · trzymane na serwerze maks. 180 dni</span>
@@ -951,11 +951,8 @@ async function renderSettings() {
     </div>
     <div class="card">
       <h2>Publikowanie</h2>
-      <div class="grid2">
-        <div><div class="label">Odstęp między postami (minuty)</div><input type="number" min="1" id="interval" value="${esc(s.interval_minutes)}"></div>
-        <div><div class="label">Cisza nocna (bez publikacji)</div>
-          <div style="display:flex;gap:8px;align-items:center"><input type="time" id="qfrom" value="${esc(s.quiet_from)}"> – <input type="time" id="qto" value="${esc(s.quiet_to)}"></div></div>
-      </div>
+      <div class="label">Odstęp między postami (minuty) – posty wychodzą o każdej porze, także w nocy</div>
+      <input type="number" min="1" id="interval" value="${esc(s.interval_minutes)}" style="max-width:160px">
     </div>
     <div class="card">
       <h2>Rozmowy</h2>
@@ -1049,7 +1046,7 @@ async function renderSettings() {
   });
   $('#save').onclick = (e) => act1(e.target, async () => {
     settingsCache = await api('/api/settings', { method: 'PUT', body: {
-      interval_minutes: $('#interval').value, quiet_from: $('#qfrom').value, quiet_to: $('#qto').value,
+      interval_minutes: $('#interval').value,
       page_rules: $('#rules').value,
       smart_routing: $('#smart').checked ? '1' : '0',
       template_published: $('#tpub').value,
