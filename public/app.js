@@ -805,12 +805,13 @@ async function renderMailbox() {
 
 async function renderPerson(psid) {
   const d = await api(`/api/mailbox/${encodeURIComponent(psid)}`);
-  const subHtml = d.submissions.length ? d.submissions.map((s) => `
+  // Tylko opublikowane posty (bez odrzuconych, rozmów itp.).
+  const posts = d.submissions.filter((s) => s.status === 'published');
+  const subHtml = posts.length ? posts.map((s) => `
     <div class="sub-row">
-      <span class="tag">${STATUS_LABEL[s.status] || esc(s.status)}</span>
-      <span class="stat">${fmt(s.created_at)}</span> ${postLink(s)}
+      <span class="stat">${fmt(s.published_at || s.created_at)}</span> ${postLink(s)}
       <div class="sub-text">${highlight(String(s.final_text || s.original_text || '(tylko zdjęcia)').slice(0, 220), mailboxQ)}</div>
-    </div>`).join('') : '<div class="stat">Brak zgłoszeń.</div>';
+    </div>`).join('') : '<div class="stat">Brak opublikowanych postów.</div>';
   const fbBtn = (link) => link
     ? `<a class="btn primary" href="${esc(link)}" target="_blank" rel="noopener">👤 Otwórz rozmowę na Facebooku</a>`
     : `<a class="btn primary" href="${pageInboxUrl(psid)}" target="_blank" rel="noopener">👤 Otwórz w skrzynce Meta</a>`;
@@ -818,14 +819,14 @@ async function renderPerson(psid) {
     <button class="ghost small back" data-act="back">← Wróć do skrzynki</button>
     <div class="card person-card">
       <div class="top"><h2 style="margin:0">${esc(d.name || 'Użytkownik FB')}</h2>
-        <span class="meta-r">${d.messages.length} wiad. · ${d.submissions.length} zgł.</span></div>
+        <span class="meta-r">${d.messages.length} wiad. · ${posts.length} post${posts.length === 1 ? '' : posts.length > 1 && posts.length < 5 ? 'y' : 'ów'}</span></div>
       <div class="actions" id="fbLinks">${fbBtn(d.fb_link)}</div>
       <div class="stat" id="fbHint">${d.fb_link ? 'Link prowadzi do rozmowy w skrzynce strony – stamtąd jednym kliknięciem przejdziesz na profil tej osoby.' : '<span class="spinner"></span> Szukam rozmowy na Facebooku…'}</div>
     </div>
     <div class="card"><h2>Historia wiadomości</h2>
       <div class="chat full">${d.messages.map((m) => bubble({ ...m, text: m.text }).replace(/<div class="b-text">([\s\S]*?)<\/div>/, (_, inner) => `<div class="b-text">${mailboxQ ? highlight(m.text, mailboxQ) : inner}</div>`)).join('') || '<div class="stat">Brak wiadomości.</div>'}</div>
     </div>
-    <div class="card"><h2>Zgłoszenia tej osoby</h2>${subHtml}</div>`;
+    <div class="card"><h2>Posty tej osoby</h2>${subHtml}</div>`;
   const chat = $('.chat.full', main);
   const firstMark = $('mark', chat);
   requestAnimationFrame(() => { if (firstMark) firstMark.scrollIntoView({ block: 'center' }); else chat.scrollTop = chat.scrollHeight; });
