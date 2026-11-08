@@ -121,7 +121,7 @@ export function deleteSubmissionsWhere(whereSql, ...params) {
     let atts = [];
     try { atts = JSON.parse(r.attachments || '[]'); } catch { /* ignore */ }
     for (const a of atts) {
-      if (a.file) fs.rmSync(path.join(MEDIA_DIR, path.basename(a.file)), { force: true });
+      for (const f of [a.file, a.orig]) if (f) fs.rmSync(path.join(MEDIA_DIR, path.basename(f)), { force: true });
     }
     db.prepare('DELETE FROM submissions WHERE id = ?').run(r.id);
   }

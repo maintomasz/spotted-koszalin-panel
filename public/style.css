@@ -186,3 +186,34 @@ textarea.reply { margin-top: 10px; min-height: 44px; overflow: hidden; }
 .actions6 .btn .i { font-size: 19px; line-height: 1; }
 .actions6 .btn.primary { font-size: 14px; }
 .actions6 .btn.money .i { font-size: 19px; }
+
+/* Miniatury: dotknięcie = edytor, ✓ = w poście */
+.thumb .tick { border: 0; padding: 0; cursor: pointer; width: 24px; height: 24px; font-size: 13px; z-index: 2; }
+.thumb .shield { position: absolute; right: 4px; top: 3px; font-size: 14px; }
+.thumb.redacted { border-color: var(--accent); }
+.img-hint { font-size: 11.5px; color: var(--muted); margin: 2px 0 0; }
+
+/* Edytor zakrywania */
+.redactor { position: fixed; inset: 0; z-index: 60; background: #0b0c0f; color: #e8eaed; display: flex; flex-direction: column; padding: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom)); gap: 8px; }
+.redactor .btn { background: #1d2027; border-color: #2c3038; color: #e8eaed; min-height: 42px; }
+.redactor .btn.primary { background: #5b8cff; border-color: #5b8cff; color: #0b0d10; }
+.redactor .btn:disabled { opacity: .4; }
+.r-head { display: flex; gap: 8px; }
+.r-scen { flex: 1 1 auto; min-width: 0; background: #1d2027; color: #e8eaed; border: 1px solid #2c3038; border-radius: 10px; padding: 0 10px; font: inherit; font-size: 14px; }
+.r-status { font-size: 13px; color: #aab1bc; min-height: 18px; line-height: 1.35; }
+.r-status.ok { color: #9be3b1; }
+.r-status.bad { color: #f87171; }
+.r-stage { flex: 1 1 auto; min-height: 0; display: grid; place-items: center; overflow: hidden; }
+.r-wrap { position: relative; touch-action: none; user-select: none; -webkit-user-select: none; }
+.r-img { width: 100%; height: 100%; display: block; pointer-events: none; -webkit-user-drag: none; }
+.r-layer { position: absolute; inset: 0; }
+.r-box { position: absolute; border: 2px solid #ff4d6d; box-sizing: border-box; cursor: move; }
+.r-box.black { background: rgba(0,0,0,.82); }
+.r-box.pixelate { background: rgba(255,255,255,.08); backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+.r-box.sel { border-color: #5b8cff; box-shadow: 0 0 0 2px rgba(91,140,255,.35); }
+.r-label { position: absolute; left: 0; top: -18px; font-size: 10.5px; background: #ff4d6d; color: #fff; padding: 0 4px; border-radius: 3px; white-space: nowrap; pointer-events: none; }
+.r-box.sel .r-label { background: #5b8cff; }
+.r-handle { position: absolute; right: -11px; bottom: -11px; width: 22px; height: 22px; border-radius: 50%; background: #5b8cff; border: 2px solid #fff; cursor: nwse-resize; }
+.r-tools, .r-foot { display: flex; gap: 6px; }
+.r-tools .btn { flex: 1 1 0; padding: 6px 4px; font-size: 13px; }
+.r-foot .btn { padding: 8px 10px; font-size: 14px; }

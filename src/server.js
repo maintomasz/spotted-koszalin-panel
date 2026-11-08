@@ -6,7 +6,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, DATA_DIR, MEDIA_DIR, getSubmission, updateSubmission, parseRow } from './db.js';
 import { getSettings, saveSettings } from './settings.js';
-import { aiEnabled, AI_MODEL } from './ai.js';
+import { aiEnabled, AI_MODEL, suggestRedactions } from './ai.js';
 import { fbEnabled, verifySignature, saveMedia, diagnose, editPost } from './facebook.js';
 import { listOpenThreads, getThread, upsertThread, sendAndLog, logMessage } from './threads.js';
 import { handleWebhook, addToInbox, createSubmission } from './inbox.js';
@@ -328,6 +328,63 @@ app.post('/api/threads/:psid/to-post', (req, res) => {
   }
   upsertThread(t.sender_id, { state: 'closed', submission_id: id });
   res.json({ ok: true, id });
+});
+
+// ---------- Zakrywanie danych na zdjęciach ----------
+function findAttachment(sub, file) {
+  const atts = sub.attachments || [];
+  const i = atts.findIndex((a) => a.type === 'image' && a.file === file);
+  return i < 0 ? null : { atts, i, att: atts[i] };
+}
+
+// AI proponuje prostokąty do zakrycia (zawsze liczone na ORYGINALE zdjęcia).
+app.post('/api/submissions/:id/redact-suggest', async (req, res) => {
+  const sub = load(req, res, ['new', 'failed']);
+  if (!sub) return;
+  const f = findAttachment(sub, String(req.body.file || ''));
+  if (!f) return res.status(404).json({ error: 'Nie ma takiego zdjęcia.' });
+  const scenario = String(req.body.scenario || 'auto');
+  try {
+    const { result, cost } = await suggestRedactions({
+      file: f.att.orig || f.att.file, mime: f.att.origMime || f.att.mime, scenario, context: sub.original_text,
+    });
+    f.atts[f.i] = { ...f.att, suggest: { scenario, ...result } };
+    updateSubmission(sub.id, { attachments: f.atts, ai_cost_usd: (sub.ai_cost_usd || 0) + cost });
+    res.json(result);
+  } catch (err) {
+    console.error('[Zakrywanie] AI:', err.message);
+    res.status(502).json({ error: 'AI nie dało rady: ' + err.message });
+  }
+});
+
+// Zapis zakrytej wersji (obraz wyrenderowany w przeglądarce). Oryginał zostaje do cofnięcia.
+app.post('/api/submissions/:id/redact', (req, res) => {
+  const sub = load(req, res, ['new', 'failed']);
+  if (!sub) return;
+  const f = findAttachment(sub, String(req.body.file || ''));
+  if (!f) return res.status(404).json({ error: 'Nie ma takiego zdjęcia.' });
+  const buf = Buffer.from(String(req.body.data || ''), 'base64');
+  if (buf.length < 100 || buf[0] !== 0xff || buf[1] !== 0xd8) return res.status(400).json({ error: 'Nieprawidłowy obraz.' });
+  const saved = saveMedia(buf, 'image/jpeg');
+  const orig = f.att.orig || f.att.file;
+  const origMime = f.att.origMime || f.att.mime;
+  // Poprzednia zakryta wersja (nie oryginał) nie jest już potrzebna.
+  if (f.att.orig && f.att.file !== f.att.orig) fs.rmSync(path.join(MEDIA_DIR, path.basename(f.att.file)), { force: true });
+  f.atts[f.i] = { ...f.att, file: saved.file, mime: 'image/jpeg', orig, origMime, redacted: true, boxes: req.body.boxes || [] };
+  updateSubmission(sub.id, { attachments: f.atts });
+  res.json({ ok: true, file: saved.file });
+});
+
+app.post('/api/submissions/:id/redact-revert', (req, res) => {
+  const sub = load(req, res, ['new', 'failed']);
+  if (!sub) return;
+  const f = findAttachment(sub, String(req.body.file || ''));
+  if (!f || !f.att.orig) return res.status(404).json({ error: 'To zdjęcie nie było zakrywane.' });
+  fs.rmSync(path.join(MEDIA_DIR, path.basename(f.att.file)), { force: true });
+  const { orig, origMime, redacted, boxes, ...rest } = f.att;
+  f.atts[f.i] = { ...rest, file: orig, mime: origMime || 'image/jpeg' };
+  updateSubmission(sub.id, { attachments: f.atts });
+  res.json({ ok: true, file: orig });
 });
 
 // Poprawa treści już opublikowanego posta.

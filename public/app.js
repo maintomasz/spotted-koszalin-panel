@@ -180,13 +180,13 @@ function fillCard(c, s) {
     ${images.length ? `<div class="thumbs-row">${images.map((img, i) => {
       const n = notes.get(i + 1);
       const on = !n || n.ok_to_publish !== false;
-      return `<div class="thumb${on ? '' : ' off'}" data-img="${esc(img.file)}" data-on="${on ? 1 : 0}" title="Dotknij, aby dodać/usunąć z posta">
+      return `<div class="thumb${on ? '' : ' off'}${img.redacted ? ' redacted' : ''}" data-img="${esc(img.file)}" data-idx="${i}" data-on="${on ? 1 : 0}" title="Dotknij, aby zakryć dane">
         <img src="/media/${esc(img.file)}" alt="zdjęcie ${i + 1}" loading="lazy">
-        <span class="tick">${on ? '✓' : '✕'}</span><span class="num">${i + 1}</span>
-        ${n?.needs_anonymization ? '<span class="warn">⚠️</span>' : ''}
-        <button class="zoom" data-act="zoom" data-src="/media/${esc(img.file)}" aria-label="Powiększ">⤢</button>
+        <button class="tick" aria-label="W poście / bez">${on ? '✓' : '✕'}</button><span class="num">${i + 1}</span>
+        ${img.redacted ? '<span class="shield" title="Zakryte">🛡️</span>' : n?.needs_anonymization ? '<span class="warn">⚠️</span>' : ''}
       </div>`;
     }).join('')}</div>
+    <div class="img-hint">Dotknij zdjęcia, żeby zakryć dane · ✓ w rogu = zdjęcie w poście</div>
     ${hideNotes.length ? `<div class="img-notes">⚠️ Zakryj: ${groupNotes(hideNotes)}</div>` : ''}` : ''}
     <div class="post" data-act="edit" title="Dotknij, aby edytować">${suggested ? esc(suggested) : '<i>(bez tekstu)</i>'}</div>
     <textarea class="post-edit" hidden>${esc(suggested)}</textarea>
@@ -216,12 +216,28 @@ function fillCard(c, s) {
   };
   ta.addEventListener('input', () => { c.dirty = true; autosize(); });
   el.querySelectorAll('.thumb').forEach((t) => t.addEventListener('click', (e) => {
-    if (e.target.closest('.zoom')) return;
-    const on = t.dataset.on !== '1';
-    t.dataset.on = on ? '1' : '0';
-    t.classList.toggle('off', !on);
-    $('.tick', t).textContent = on ? '✓' : '✕';
-    c.dirty = true;
+    if (e.target.closest('.tick')) {
+      const on = t.dataset.on !== '1';
+      t.dataset.on = on ? '1' : '0';
+      t.classList.toggle('off', !on);
+      $('.tick', t).textContent = on ? '✓' : '✕';
+      c.dirty = true;
+      return;
+    }
+    const att = images[Number(t.dataset.idx)];
+    const note = notes.get(Number(t.dataset.idx) + 1);
+    openRedactor(s, att, note, (newFile, redacted) => {
+      // Podmieniamy miniaturę bez przeładowania karty (żeby nie zgubić edycji tekstu).
+      att.file = newFile;
+      att.redacted = redacted;
+      t.dataset.img = newFile;
+      $('img', t).src = `/media/${newFile}`;
+      t.classList.toggle('redacted', redacted);
+      $('.warn', t)?.remove();
+      $('.shield', t)?.remove();
+      if (redacted) t.insertAdjacentHTML('beforeend', '<span class="shield" title="Zakryte">🛡️</span>');
+      c.dirty = true;
+    });
   }));
   const selectedImages = () => [...el.querySelectorAll('.thumb[data-on="1"]')].map((x) => x.dataset.img);
   const slot = $('.sub-slot', el);
@@ -294,6 +310,218 @@ function groupNotes(list) {
     by.set(k, [...(by.get(k) || []), n.image_number]);
   }
   return [...by].map(([txt, nums]) => `<b>${nums.join(', ')}</b> ${esc(txt)}`).join(' · ');
+}
+
+// ---------- Edytor zakrywania danych na zdjęciu ----------
+const SCENARIOS = [
+  ['auto', '🤖 Wykryj automatycznie'], ['payment_card', '💳 Karta płatnicza'], ['id_document', '🪪 Dokument (dowód, prawo jazdy)'],
+  ['license_plate', '🚗 Tablice rejestracyjne'], ['faces', '🙂 Twarze'],
+];
+
+function openRedactor(sub, att, note, onSaved) {
+  // Zawsze pracujemy na ORYGINALE – zapisane prostokąty da się potem poprawić.
+  const baseFile = att.orig || att.file;
+  let boxes = (att.boxes || []).map((b) => ({ ...b }));
+  let selected = -1;
+  let defaultStyle = 'black';
+  const history = [];
+  const pushHistory = () => { history.push(JSON.stringify(boxes)); if (history.length > 50) history.shift(); };
+
+  const ov = document.createElement('div');
+  ov.className = 'redactor';
+  ov.innerHTML = `
+    <div class="r-head">
+      <select class="r-scen">${SCENARIOS.map(([v, l]) => `<option value="${v}">${l}</option>`).join('')}</select>
+      <button class="btn" data-r="ai">🤖 Zaznacz AI</button>
+    </div>
+    <div class="r-status"></div>
+    <div class="r-stage"><div class="r-wrap"><img class="r-img" alt=""><div class="r-layer"></div></div></div>
+    <div class="r-tools">
+      <button class="btn" data-r="style">⬛ Czarny</button>
+      <button class="btn" data-r="del">🗑 Usuń</button>
+      <button class="btn" data-r="undo">↩︎ Cofnij</button>
+      <button class="btn" data-r="clear">Wyczyść</button>
+    </div>
+    <div class="r-foot">
+      ${att.orig ? '<button class="btn" data-r="revert">Przywróć oryginał</button>' : ''}
+      <button class="btn" data-r="cancel">Anuluj</button>
+      <button class="btn primary grow" data-r="save">💾 Zapisz zakrycie</button>
+    </div>`;
+  document.body.appendChild(ov);
+  document.body.style.overflow = 'hidden';
+  const img = $('.r-img', ov);
+  const wrap = $('.r-wrap', ov);
+  const layer = $('.r-layer', ov);
+  const status = $('.r-status', ov);
+  const scen = $('.r-scen', ov);
+  const styleBtn = $('[data-r="style"]', ov);
+  const close = () => { ov.remove(); document.body.style.overflow = ''; };
+  const setStatus = (t, cls = '') => { status.className = 'r-status ' + cls; status.innerHTML = t; };
+
+  // Dopasowanie obrazka do ekranu (proporcje zachowane, prostokąty w ułamkach 0–1).
+  const fit = () => {
+    if (!img.naturalWidth) return;
+    const st = $('.r-stage', ov).getBoundingClientRect();
+    const scale = Math.min(st.width / img.naturalWidth, st.height / img.naturalHeight);
+    wrap.style.width = img.naturalWidth * scale + 'px';
+    wrap.style.height = img.naturalHeight * scale + 'px';
+  };
+  img.onload = () => { fit(); draw(); };
+  img.src = `/media/${baseFile}`;
+  window.addEventListener('resize', fit);
+
+  const draw = () => {
+    layer.innerHTML = boxes.map((b, i) => `<div class="r-box ${b.style}${i === selected ? ' sel' : ''}" data-i="${i}"
+      style="left:${b.x * 100}%;top:${b.y * 100}%;width:${b.w * 100}%;height:${b.h * 100}%">
+      ${b.label ? `<span class="r-label">${esc(b.label)}</span>` : ''}${i === selected ? '<span class="r-handle"></span>' : ''}</div>`).join('');
+    const st = selected >= 0 ? boxes[selected].style : defaultStyle;
+    styleBtn.textContent = st === 'black' ? '⬛ Czarny' : '🌫 Rozmycie';
+    $('[data-r="del"]', ov).disabled = selected < 0;
+    $('[data-r="undo"]', ov).disabled = !history.length;
+  };
+
+  const applySuggestion = (r) => {
+    pushHistory();
+    boxes = (r.boxes || []).map((b) => ({ x: b.x / 1000, y: b.y / 1000, w: b.w / 1000, h: b.h / 1000, style: b.style, label: b.label }));
+    selected = -1;
+    draw();
+    setStatus(`🤖 ${esc(r.note || 'Gotowe.')}${boxes.length ? ' <b>Sprawdź i popraw palcem, potem zapisz.</b>' : ''}`, boxes.length ? 'ok' : '');
+  };
+
+  const askAi = async () => {
+    const btn = $('[data-r="ai"]', ov);
+    btn.disabled = true;
+    setStatus('<span class="spinner"></span> AI szuka danych do zakrycia… (do kilkudziesięciu sekund)');
+    try {
+      const r = await api(`/api/submissions/${sub.id}/redact-suggest`, { body: { file: att.file, scenario: scen.value } });
+      att.suggest = { scenario: scen.value, ...r };
+      applySuggestion(r);
+    } catch (err) {
+      setStatus('⚠️ ' + esc(err.message), 'bad');
+    } finally {
+      btn.disabled = false;
+    }
+  };
+
+  // Start: zapisane prostokąty → poprzednia propozycja AI → nowa propozycja AI (gdy zdjęcie oznaczone do zakrycia).
+  if (boxes.length) setStatus('Zapisane zakrycie – możesz je poprawić.');
+  else if (att.suggest) { scen.value = att.suggest.scenario || 'auto'; applySuggestion(att.suggest); }
+  else if (note?.needs_anonymization) askAi();
+  else setStatus('Przeciągnij palcem po zdjęciu, żeby zakryć fragment, albo kliknij „🤖 Zaznacz AI”.');
+
+  // --- Rysowanie / przesuwanie / zmiana rozmiaru palcem ---
+  let drag = null;
+  const pos = (e) => {
+    const r = wrap.getBoundingClientRect();
+    return { x: Math.min(1, Math.max(0, (e.clientX - r.left) / r.width)), y: Math.min(1, Math.max(0, (e.clientY - r.top) / r.height)) };
+  };
+  wrap.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    wrap.setPointerCapture(e.pointerId);
+    const p = pos(e);
+    const boxEl = e.target.closest('.r-box');
+    pushHistory();
+    if (e.target.classList.contains('r-handle')) {
+      drag = { mode: 'resize', i: selected, start: p, orig: { ...boxes[selected] } };
+    } else if (boxEl) {
+      selected = Number(boxEl.dataset.i);
+      drag = { mode: 'move', i: selected, start: p, orig: { ...boxes[selected] } };
+      draw();
+    } else {
+      boxes.push({ x: p.x, y: p.y, w: 0, h: 0, style: defaultStyle, label: '' });
+      selected = boxes.length - 1;
+      drag = { mode: 'new', i: selected, start: p };
+      draw();
+    }
+  });
+  wrap.addEventListener('pointermove', (e) => {
+    if (!drag) return;
+    const p = pos(e);
+    const b = boxes[drag.i];
+    if (drag.mode === 'new') {
+      b.x = Math.min(p.x, drag.start.x); b.y = Math.min(p.y, drag.start.y);
+      b.w = Math.abs(p.x - drag.start.x); b.h = Math.abs(p.y - drag.start.y);
+    } else if (drag.mode === 'move') {
+      b.x = Math.min(1 - b.w, Math.max(0, drag.orig.x + p.x - drag.start.x));
+      b.y = Math.min(1 - b.h, Math.max(0, drag.orig.y + p.y - drag.start.y));
+    } else {
+      b.w = Math.max(0.01, Math.min(1 - b.x, drag.orig.w + p.x - drag.start.x));
+      b.h = Math.max(0.01, Math.min(1 - b.y, drag.orig.h + p.y - drag.start.y));
+    }
+    draw();
+  });
+  const endDrag = () => {
+    if (!drag) return;
+    const b = boxes[drag.i];
+    if (drag.mode === 'new' && (b.w < 0.015 || b.h < 0.015)) { boxes.splice(drag.i, 1); selected = -1; history.pop(); }
+    else if (drag.mode !== 'new' && JSON.stringify(b) === JSON.stringify(drag.orig)) history.pop(); // samo zaznaczenie
+    drag = null;
+    draw();
+  };
+  wrap.addEventListener('pointerup', endDrag);
+  wrap.addEventListener('pointercancel', endDrag);
+
+  // --- Zapis: renderujemy zakrycie na pełnej rozdzielczości oryginału ---
+  const render = () => {
+    const cv = document.createElement('canvas');
+    cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+    const ctx = cv.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    for (const b of boxes) {
+      const x = Math.round(b.x * cv.width), y = Math.round(b.y * cv.height);
+      const w = Math.max(1, Math.round(b.w * cv.width)), h = Math.max(1, Math.round(b.h * cv.height));
+      if (b.style === 'pixelate') {
+        const block = Math.max(10, Math.round(Math.max(w, h) / 8));
+        const sw = Math.max(1, Math.ceil(w / block)), sh = Math.max(1, Math.ceil(h / block));
+        const tmp = document.createElement('canvas');
+        tmp.width = sw; tmp.height = sh;
+        tmp.getContext('2d').drawImage(cv, x, y, w, h, 0, 0, sw, sh);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(tmp, 0, 0, sw, sh, x, y, w, h);
+        ctx.imageSmoothingEnabled = true;
+      } else {
+        ctx.fillStyle = '#000';
+        ctx.fillRect(x, y, w, h);
+      }
+    }
+    return cv.toDataURL('image/jpeg', 0.9).split(',')[1];
+  };
+
+  ov.addEventListener('click', async (e) => {
+    const a = e.target.closest('[data-r]');
+    if (!a) return;
+    const act = a.dataset.r;
+    if (act === 'cancel') return close();
+    if (act === 'ai') return askAi();
+    if (act === 'style') {
+      if (selected >= 0) { pushHistory(); boxes[selected].style = boxes[selected].style === 'black' ? 'pixelate' : 'black'; }
+      else defaultStyle = defaultStyle === 'black' ? 'pixelate' : 'black';
+      return draw();
+    }
+    if (act === 'del' && selected >= 0) { pushHistory(); boxes.splice(selected, 1); selected = -1; return draw(); }
+    if (act === 'undo' && history.length) { boxes = JSON.parse(history.pop()); selected = -1; return draw(); }
+    if (act === 'clear') { pushHistory(); boxes = []; selected = -1; return draw(); }
+    if (act === 'revert') {
+      return act1(a, async () => {
+        const r = await api(`/api/submissions/${sub.id}/redact-revert`, { body: { file: att.file } });
+        delete att.orig; att.boxes = [];
+        onSaved(r.file, false);
+        toast('↩︎ Przywrócono oryginał zdjęcia');
+        close();
+      });
+    }
+    if (act === 'save') {
+      if (!boxes.length) return setStatus('Nie ma nic do zakrycia – zaznacz fragment albo kliknij „Anuluj”.', 'bad');
+      return act1(a, async () => {
+        setStatus('<span class="spinner"></span> Zapisuję…');
+        const r = await api(`/api/submissions/${sub.id}/redact`, { body: { file: att.file, data: render(), boxes } });
+        att.orig = baseFile; att.boxes = boxes;
+        onSaved(r.file, true);
+        toast('🛡️ Zapisano – do posta pójdzie zakryta wersja');
+        close();
+      });
+    }
+  });
 }
 
 function lightbox(src) {
