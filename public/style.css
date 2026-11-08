@@ -179,3 +179,10 @@ a.btn.primary { background: var(--accent); border-color: var(--accent); color: v
 .b-imgs img { width: 64px; height: 64px; object-fit: cover; border-radius: 8px; cursor: zoom-in; }
 textarea.reply { margin-top: 10px; min-height: 44px; overflow: hidden; }
 .sub-panel.menu a.btn { justify-content: flex-start; font-weight: 500; }
+
+/* Sześć widocznych przycisków decyzji (2 rzędy × 3) */
+.actions6 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 10px; }
+.actions6 .btn { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; min-height: 56px; padding: 6px 4px; font-size: 13px; line-height: 1.2; text-align: center; }
+.actions6 .btn .i { font-size: 19px; line-height: 1; }
+.actions6 .btn.primary { font-size: 14px; }
+.actions6 .btn.money .i { font-size: 19px; }

@@ -175,7 +175,7 @@ function fillCard(c, s) {
     ${issues.length ? `<div class="chips">${issues.map((i) =>
       `<span class="chip sev-${esc(i.severity)}" title="${esc(i.description)}">${esc(ISSUE[i.type] || i.type)}</span>`).join('')}</div>` : ''}
     ${String(s.flags || '').includes('author_edit') ? '<div class="notice">⚠️ Autor dopisał coś, gdy post czekał w kolejce – publikacja wstrzymana. Sprawdź tekst i zatwierdź ponownie.</div>' : ''}
-    ${s.has_video ? '<div class="notice">🎬 Jest wideo – obejrzyj w skrzynce FB, wrzuć ręcznie i daj ⋯ → „Obsłużone ręcznie”.</div>' : ''}
+    ${s.has_video ? '<div class="notice">🎬 Jest wideo – obejrzyj w skrzynce FB i wrzuć ręcznie. Potem „Odrzuć z powodem” z odznaczonym wysyłaniem, żeby zdjąć kartę.</div>' : ''}
     ${otherAtt.length ? `<div class="notice info">Inne załączniki (${otherAtt.map((a) => esc(a.type)).join(', ')}) – sprawdź w skrzynce FB.</div>` : ''}
     ${images.length ? `<div class="thumbs-row">${images.map((img, i) => {
       const n = notes.get(i + 1);
@@ -197,11 +197,13 @@ function fillCard(c, s) {
       <button class="btn" data-act="handled" title="Odpisałem – usuń z listy">✋ Obsłużone</button>
       <button class="btn icon" data-act="more" title="Więcej opcji">⋯</button>
     </div>` : `
-    <div class="decide">
-      <button class="btn primary grow" data-act="approve">✅ Zatwierdź</button>
-      <button class="btn icon danger" data-act="reject-quick" title="Odrzuć (z wiadomością z szablonu)">⛔</button>
-      <button class="btn icon money" data-act="commercial" title="Komercyjne – oferta reklamy">💰</button>
-      <button class="btn icon" data-act="more" title="Więcej opcji">⋯</button>
+    <div class="actions6">
+      <button class="btn primary" data-act="approve" title="Do kolejki publikacji"><span class="i">✅</span><span>Zatwierdź</span></button>
+      <button class="btn danger" data-act="reject-quick" title="Odrzuć i wyślij wiadomość z szablonu"><span class="i">⛔</span><span>Odrzuć</span></button>
+      <button class="btn money" data-act="commercial" title="Komercyjne – wyślij ofertę reklamy"><span class="i">💰</span><span>Reklama</span></button>
+      <button class="btn danger" data-act="reject" title="Odrzuć i dopisz powód"><span class="i">✍️</span><span>Odrzuć z powodem</span></button>
+      <button class="btn" data-act="approve-now" title="Opublikuj teraz, z pominięciem kolejki"><span class="i">🚀</span><span>Opublikuj od razu</span></button>
+      <button class="btn" data-act="to-thread" title="To pytanie do admina – przenieś do Rozmów"><span class="i">💬</span><span>Rozmowa</span></button>
     </div>`}
     <div class="sub-slot"></div>`;
 
@@ -275,18 +277,12 @@ function fillCard(c, s) {
     if (act === 'more') {
       if (slot.innerHTML) { slot.innerHTML = ''; return; }
       slot.innerHTML = `<div class="sub-panel menu">
-        ${verdict === 'conversation' ? '<button class="btn" data-act="approve">✅ To jednak post – zatwierdź do kolejki</button>' : ''}
-        <button class="btn" data-act="reject">⛔ Odrzuć z powodem</button>
-        <button class="btn" data-act="approve-now">🚀 Opublikuj od razu (bez kolejki)</button>
-        <button class="btn" data-act="edit">✏️ Edytuj tekst</button>
-        <button class="btn" data-act="handled">✋ Obsłużone ręcznie</button>
-        <button class="btn" data-act="reanalyze">🔄 Oceń ponownie AI</button></div>`;
+        <button class="btn" data-act="approve">✅ To jednak post – zatwierdź do kolejki</button>
+        <button class="btn" data-act="reject">✍️ Odrzuć z powodem</button></div>`;
       return;
     }
     if (act === 'handled') return decide(a, 'handled', {}, '✋ Oznaczono jako obsłużone');
-    if (act === 'reanalyze') {
-      await act1(a, async () => { await api(`/api/submissions/${s.id}/reanalyze`, { body: {} }); c.dirty = false; toast('🔄 AI oceni ponownie'); tick(); });
-    }
+    if (act === 'to-thread') return decide(a, 'to-thread', {}, '💬 Przeniesiono do „Rozmów”');
   };
 }
 

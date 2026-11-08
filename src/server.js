@@ -205,11 +205,26 @@ app.post('/api/submissions/:id/handled', (req, res) => {
   res.json({ ok: true });
 });
 
+// „Rozmowa” – to nie post, tylko pytanie do admina → przenosimy do zakładki Rozmowy.
+app.post('/api/submissions/:id/to-thread', (req, res) => {
+  const sub = load(req, res, ['new', 'failed']);
+  if (!sub) return;
+  if (!sub.sender_id) return res.status(400).json({ error: 'To nie jest wiadomość z Facebooka – nie ma z kim rozmawiać.' });
+  updateSubmission(sub.id, { status: 'conversation', decided_at: Date.now() });
+  const cur = getThread(sub.sender_id);
+  upsertThread(sub.sender_id, {
+    state: 'open', reason: 'conversation', submission_id: sub.id, sender_name: sub.sender_name || cur?.sender_name || null,
+    summary: sub.ai_result?.summary || null, last_in_at: sub.last_user_message_at,
+  });
+  res.json({ ok: true });
+});
+
 app.post('/api/submissions/:id/restore', (req, res) => {
-  const sub = load(req, res, ['queued', 'rejected', 'handled', 'commercial', 'failed']);
+  const sub = load(req, res, ['queued', 'rejected', 'handled', 'commercial', 'failed', 'conversation']);
   if (!sub) return;
   updateSubmission(sub.id, { status: 'new', scheduled_at: null });
   if (sub.status === 'queued') reflowQueue();
+  if (sub.status === 'conversation' && sub.sender_id) upsertThread(sub.sender_id, { state: 'closed' });
   res.json({ ok: true });
 });
 
