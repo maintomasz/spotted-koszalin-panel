@@ -172,7 +172,8 @@ function fillCard(c, s) {
     <div class="actions">
       <button class="btn primary" data-act="approve">✅ Zatwierdź do kolejki</button>
       <button class="btn money" data-act="commercial">💰 Komercyjne</button>
-      <button class="btn danger" data-act="reject">⛔ Odrzuć</button>
+      <button class="btn danger" data-act="reject-quick">⛔ Odrzuć</button>
+      <button class="btn danger" data-act="reject">⛔ Odrzuć + dlaczego</button>
       <button class="btn" data-act="more">⋯</button>
     </div>
     <div class="sub-slot"></div>`;
@@ -201,15 +202,25 @@ function fillCard(c, s) {
       });
       return;
     }
+    if (act === 'reject-quick') {
+      const st = settingsCache || (settingsCache = await api('/api/settings'));
+      await act1(a, async () => {
+        const r = await api(`/api/submissions/${s.id}/reject`, { body: { message: st.template_reject } });
+        toast(`Odrzucono${r.reply ? ' · wiadomość: ' + r.reply : ''}`);
+        removeCard(s.id);
+      });
+      return;
+    }
     if (act === 'commercial' || act === 'reject') {
       const st = settingsCache || (settingsCache = await api('/api/settings'));
       const isCom = act === 'commercial';
       const canReply = s.source === 'facebook';
+      const msg = isCom ? st.template_commercial : `${st.template_reject}\n\nPowód: `;
       slot.innerHTML = `<div class="sub-panel">
-        <div class="label"><span>${isCom ? 'Wiadomość do autora (oferta reklamy)' : 'Wiadomość do autora (opcjonalnie)'}</span></div>
-        <label class="row"><input type="checkbox" class="send" ${isCom && canReply ? 'checked' : ''} ${canReply ? '' : 'disabled'}>
+        <div class="label"><span>${isCom ? 'Wiadomość do autora (oferta reklamy)' : 'Wiadomość do autora – dopisz powód'}</span></div>
+        <label class="row"><input type="checkbox" class="send" ${canReply ? 'checked' : 'disabled'}>
           Wyślij wiadomość na Messengerze${canReply ? '' : ' (niedostępne – to nie jest wiadomość z FB)'}</label>
-        <textarea class="msg">${esc(isCom ? st.template_commercial : st.template_reject)}</textarea>
+        <textarea class="msg">${esc(msg)}</textarea>
         <div class="row">
           <button class="btn ${isCom ? 'money' : 'danger'}" data-act="${isCom ? 'commercial-go' : 'reject-go'}">${isCom ? 'Oznacz jako komercyjne' : 'Odrzuć'}</button>
           <button class="btn" data-act="cancel">Anuluj</button>
@@ -349,7 +360,7 @@ async function renderSettings() {
     <div class="card">
       <h2>Szablony wiadomości</h2>
       <div class="label">Odpowiedź na treść komercyjną</div><textarea id="tcom">${esc(s.template_commercial)}</textarea>
-      <div class="label">Odpowiedź przy odrzuceniu</div><textarea id="trej">${esc(s.template_reject)}</textarea>
+      <div class="label">Odpowiedź przy odrzuceniu (wysyłana od razu po kliknięciu „Odrzuć”; przy „Odrzuć + dlaczego” dopisujesz powód)</div><textarea id="trej">${esc(s.template_reject)}</textarea>
       <div class="actions"><button class="btn primary" id="save">Zapisz ustawienia</button></div>
     </div>
     <div class="card">
