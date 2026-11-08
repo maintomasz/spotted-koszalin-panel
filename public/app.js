@@ -346,7 +346,7 @@ function listCard(s) {
     actions = `<button class="btn" data-act="now">🚀 Opublikuj teraz</button><button class="btn" data-act="restore">↩︎ Cofnij do decyzji</button>`;
   } else if (tab === 'published') {
     const link = s.fb_post_id && !s.fb_post_id.startsWith('DEMO') ? `<a href="https://www.facebook.com/${esc(s.fb_post_id)}" target="_blank" rel="noopener">zobacz na FB ↗</a>` : '<span>(tryb demo – nie wysłano na FB)</span>';
-    meta = `<span>Opublikowano ${fmt(s.published_at)}</span>${link}`;
+    meta = `<span>Opublikowano ${fmt(s.published_at)}</span>${link}${s.reply_sent ? `<span>· ${esc(s.reply_sent)}</span>` : ''}`;
   } else if (tab === 'failed') {
     meta = `<span class="error-text">${esc(s.publish_error)}</span>`;
     actions = `<button class="btn primary" data-act="retry">Ponów publikację</button><button class="btn" data-act="restore">↩︎ Cofnij do decyzji</button>`;
@@ -392,6 +392,7 @@ async function renderSettings() {
       <h2>Szablony wiadomości</h2>
       <div class="label">Odpowiedź na treść komercyjną</div><textarea id="tcom">${esc(s.template_commercial)}</textarea>
       <div class="label">Odpowiedź przy odrzuceniu (wysyłana od razu po kliknięciu „Odrzuć”; przy „Odrzuć + dlaczego” dopisujesz powód)</div><textarea id="trej">${esc(s.template_reject)}</textarea>
+      <div class="label">Podziękowanie po publikacji (wysyłane automatycznie, gdy post pojawi się na stronie; zostaw puste, żeby nie wysyłać)</div><textarea id="tpub">${esc(s.template_published)}</textarea>
       <div class="actions"><button class="btn primary" id="save">Zapisz ustawienia</button></div>
     </div>
     <div class="card">
@@ -423,6 +424,7 @@ async function renderSettings() {
     settingsCache = await api('/api/settings', { method: 'PUT', body: {
       interval_minutes: $('#interval').value, quiet_from: $('#qfrom').value, quiet_to: $('#qto').value,
       page_rules: $('#rules').value, template_commercial: $('#tcom').value, template_reject: $('#trej').value,
+      template_published: $('#tpub').value,
     } });
     toast('Zapisano');
   });

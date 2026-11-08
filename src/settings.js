@@ -14,6 +14,10 @@ export const DEFAULT_SETTINGS = {
 - Zgubione dokumenty: zostaje tylko imię i pierwsza litera nazwiska, reszta danych zakryta.`,
   template_commercial: `Cześć! Dzięki za wiadomość 🙂 Twoja treść ma charakter komercyjny (reklama / sprzedaż / promocja), a takich wpisów nie publikujemy bezpłatnie. Chętnie przedstawimy ofertę płatnej publikacji na Spotted Koszalin – daj znać, jeśli chcesz poznać szczegóły!`,
   template_reject: `Cześć! Dziękujemy za wiadomość, niestety nie możemy jej opublikować, ponieważ nie spełnia zasad naszej strony.`,
+  template_published: `Twój post został opublikowany! 🎉
+Pozdrawiam, Spotted Koszalin
+
+Jeśli podoba Ci się nasza praca, możesz postawić nam kawę: https://buycoffee.to/spottedkoszalin ☕ Dzięki!`,
 };
 
 export function getSettings() {
