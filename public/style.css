@@ -217,3 +217,16 @@ textarea.reply { margin-top: 10px; min-height: 44px; overflow: hidden; }
 .r-tools, .r-foot { display: flex; gap: 6px; }
 .r-tools .btn { flex: 1 1 0; padding: 6px 4px; font-size: 13px; }
 .r-foot .btn { padding: 8px 10px; font-size: 14px; }
+
+/* Szybkie odpowiedzi */
+.qr { margin-top: 10px; }
+.qr-sugg { font-size: 13px; color: var(--warn); margin-bottom: 5px; }
+.qr-row { display: flex; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.qr-row::-webkit-scrollbar { display: none; }
+.chip-btn { flex: 0 0 auto; border: 1px solid var(--border); background: var(--soft); color: var(--text); border-radius: 999px; padding: 6px 12px; font: inherit; font-size: 13.5px; cursor: pointer; white-space: nowrap; }
+.chip-btn.sugg { border-color: var(--warn); background: var(--warn-bg); color: var(--warn); font-weight: 600; }
+.thread .qr { margin-top: 8px; }
+details.preset { border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; margin-top: 8px; }
+details.preset summary { cursor: pointer; }
+details.preset textarea.p-text { min-height: 130px; }
+select.p-action { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; }

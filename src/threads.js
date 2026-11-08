@@ -19,13 +19,13 @@ export function getThread(senderId) {
 export function upsertThread(senderId, fields) {
   const now = Date.now();
   const cur = getThread(senderId);
-  const next = { sender_name: null, state: 'closed', reason: null, summary: null, submission_id: null, last_in_at: null, last_out_at: null, ...(cur || {}), ...fields, sender_id: senderId, updated_at: now };
-  db.prepare(`INSERT INTO threads (sender_id, sender_name, state, reason, summary, submission_id, last_in_at, last_out_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+  const next = { sender_name: null, state: 'closed', reason: null, summary: null, submission_id: null, last_in_at: null, last_out_at: null, preset: null, ...(cur || {}), ...fields, sender_id: senderId, updated_at: now };
+  db.prepare(`INSERT INTO threads (sender_id, sender_name, state, reason, summary, submission_id, last_in_at, last_out_at, preset, updated_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT(sender_id) DO UPDATE SET sender_name = excluded.sender_name, state = excluded.state, reason = excluded.reason,
       summary = excluded.summary, submission_id = excluded.submission_id, last_in_at = excluded.last_in_at,
-      last_out_at = excluded.last_out_at, updated_at = excluded.updated_at`)
-    .run(next.sender_id, next.sender_name, next.state, next.reason, next.summary, next.submission_id, next.last_in_at, next.last_out_at, next.updated_at);
+      last_out_at = excluded.last_out_at, preset = excluded.preset, updated_at = excluded.updated_at`)
+    .run(next.sender_id, next.sender_name, next.state, next.reason, next.summary, next.submission_id, next.last_in_at, next.last_out_at, next.preset || null, next.updated_at);
   return getThread(senderId);
 }
 

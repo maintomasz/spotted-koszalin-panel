@@ -11,6 +11,23 @@ const VERDICT = {
   reject: '⛔ Odrzucić', manual_check: '👀 Sprawdź ręcznie', conversation: '💬 Rozmowa',
 };
 const isInboxTab = () => tab === 'new' || tab === 'conversations';
+
+// ---------- Szybkie odpowiedzi (szablony z wyzwalaczami) ----------
+const presetList = () => settingsCache?.presets_list || [];
+const presetById = (id) => presetList().find((p) => p.id === id);
+const PRESET_ACTION_BTN = { reject: '⛔ Wyślij i odrzuć', commercial: '💰 Wyślij i oznacz jako reklama', conversation: '💬 Wyślij i przenieś do rozmów' };
+const PRESET_ACTION_DONE = { reject: 'odrzucono', commercial: 'oznaczono jako reklama', conversation: 'przeniesiono do rozmów' };
+const PRESET_ACTION_LABEL = { reject: 'Odrzuć', commercial: 'Oznacz jako reklama', conversation: 'Przenieś do rozmów' };
+function quickReplies(suggested, act) {
+  const list = presetList();
+  if (!list.length) return '';
+  const ordered = [...list].sort((a, b) => (b.id === suggested) - (a.id === suggested));
+  const sugg = presetById(suggested);
+  return `<div class="qr">
+    ${sugg ? `<div class="qr-sugg">⭐ AI proponuje odpowiedź: <b>${esc(sugg.name)}</b></div>` : ''}
+    <div class="qr-row">${ordered.map((p) => `<button class="chip-btn${p.id === suggested ? ' sugg' : ''}" data-act="${act}" data-preset="${esc(p.id)}">${p.id === suggested ? '⭐ ' : ''}${esc(p.name)}</button>`).join('')}</div>
+  </div>`;
+}
 const inboxUrl = () => `https://business.facebook.com/latest/inbox/all/${status.pageId ? `?asset_id=${encodeURIComponent(status.pageId)}` : ''}`;
 const CATEGORY = {
   pytanie_polecenie: 'pytanie / polecenie', zgubione_znalezione: 'zgubione / znalezione', zwierzeta: 'zwierzęta',
@@ -197,6 +214,7 @@ function fillCard(c, s) {
       <button class="btn" data-act="handled" title="Odpisałem – usuń z listy">✋ Obsłużone</button>
       <button class="btn icon" data-act="more" title="Więcej opcji">⋯</button>
     </div>` : `
+    ${quickReplies(ai?.suggested_preset, 'preset')}
     <div class="actions6">
       <button class="btn primary" data-act="approve" title="Do kolejki publikacji"><span class="i">✅</span><span>Zatwierdź</span></button>
       <button class="btn danger" data-act="reject-quick" title="Odrzuć i wyślij wiadomość z szablonu"><span class="i">⛔</span><span>Odrzuć</span></button>
@@ -261,15 +279,41 @@ function fillCard(c, s) {
     if (act === 'approve-now') {
       return decide(a, 'approve', { text: ta.value, images: selectedImages(), now: true }, '🚀 Publikuję w ciągu kilkunastu sekund');
     }
+    const canReply = s.source === 'facebook';
+    const openPreset = (p) => {
+      slot.innerHTML = `<div class="sub-panel">
+        <div class="label"><span>📋 <b>${esc(p.name)}</b> – możesz poprawić treść przed wysłaniem</span></div>
+        <label class="row small"><input type="checkbox" class="send" ${canReply ? 'checked' : 'disabled'}>
+          Wyślij na Messengerze${canReply ? '' : ' (to nie jest wiadomość z FB)'}</label>
+        <textarea class="msg">${esc(p.text)}</textarea>
+        <div class="row">
+          <button class="btn ${p.action === 'commercial' ? 'money' : p.action === 'reject' ? 'danger' : 'primary'} grow" data-act="preset-go" data-preset="${esc(p.id)}">${PRESET_ACTION_BTN[p.action] || 'Wyślij'}</button>
+          <button class="btn" data-act="cancel">Anuluj</button>
+        </div></div>`;
+      const m = $('.msg', slot);
+      m.style.height = Math.min(320, m.scrollHeight + 2) + 'px';
+      slot.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    };
+    if (act === 'preset') {
+      const p = presetById(a.dataset.preset);
+      if (p) openPreset(p);
+      return;
+    }
+    if (act === 'preset-go') {
+      const p = presetById(a.dataset.preset);
+      const send = $('.send', slot).checked;
+      return decide(a, 'preset', { presetId: p.id, text: $('.msg', slot).value, send },
+        (r) => `📋 ${p.name}: ${PRESET_ACTION_DONE[r.action] || 'gotowe'}${r.reply === 'wysłano' ? ' · wysłano wiadomość' : ''}`);
+    }
     if (act === 'reject-quick') {
       const st = settingsCache || (settingsCache = await api('/api/settings'));
-      return decide(a, 'reject', { message: st.template_reject }, (r) => `⛔ Odrzucono${r.reply === 'wysłano' ? ' · wysłano wiadomość' : ''}`);
+      return decide(a, 'reject', { message: presetById('odrzucenie')?.text || st.template_reject }, (r) => `⛔ Odrzucono${r.reply === 'wysłano' ? ' · wysłano wiadomość' : ''}`);
     }
+    if (act === 'commercial' && presetById('reklama')) return openPreset(presetById('reklama'));
     if (act === 'commercial' || act === 'reject') {
       const st = settingsCache || (settingsCache = await api('/api/settings'));
       const isCom = act === 'commercial';
-      const canReply = s.source === 'facebook';
-      const msg = isCom ? st.template_commercial : `${st.template_reject}\n\nPowód: `;
+      const msg = isCom ? st.template_commercial : `${presetById('odrzucenie')?.text || st.template_reject}\n\nPowód: `;
       slot.innerHTML = `<div class="sub-panel">
         <label class="row small"><input type="checkbox" class="send" ${canReply ? 'checked' : 'disabled'}>
           ${isCom ? 'Wyślij ofertę reklamy na Messengerze' : 'Wyślij wiadomość z powodem'}${canReply ? '' : ' (to nie jest wiadomość z FB)'}</label>
@@ -589,7 +633,8 @@ function renderThreads(items) {
 function bubble(m) {
   const imgs = (m.attachments || []).filter((a) => a.type === 'image' && a.file);
   const other = (m.attachments || []).filter((a) => a.type !== 'image');
-  const label = m.direction === 'out' && KIND_LABEL[m.kind] ? `<div class="b-label">${KIND_LABEL[m.kind]}</div>` : '';
+  const kindLabel = String(m.kind || '').startsWith('preset_') ? `📋 ${presetById(m.kind.slice(7))?.name || 'szablon'}` : KIND_LABEL[m.kind];
+  const label = m.direction === 'out' && kindLabel ? `<div class="b-label">${esc(kindLabel)}</div>` : '';
   return `<div class="b ${m.direction === 'out' ? 'out' : 'in'}">
     ${label}
     ${m.text ? `<div class="b-text">${esc(m.text)}</div>` : ''}
@@ -616,7 +661,7 @@ function fillThread(c, t) {
     ${sub && sub.status !== 'conversation' ? `<div class="ctx">Dotyczy zgłoszenia: <b>${STATUS_LABEL[sub.status] || esc(sub.status)}</b> ${postLink(sub)}
       <div class="ctx-text">${esc((sub.final_text || sub.original_text || '').slice(0, 160))}${(sub.final_text || sub.original_text || '').length > 160 ? '…' : ''}</div></div>` : ''}
     <div class="chat">${t.history.map(bubble).join('')}</div>
-    ${canReply ? '<textarea class="reply" rows="2" placeholder="Napisz odpowiedź…"></textarea>' : '<div class="notice info">Minęło 24 h od ostatniej wiadomości – Facebook pozwala odpisać już tylko ze skrzynki strony.</div>'}
+    ${canReply ? `${quickReplies(t.preset, 'tpl')}<textarea class="reply" rows="2" placeholder="Napisz odpowiedź albo wybierz szybką odpowiedź…"></textarea>` : '<div class="notice info">Minęło 24 h od ostatniej wiadomości – Facebook pozwala odpisać już tylko ze skrzynki strony.</div>'}
     <div class="decide">
       ${canReply ? '<button class="btn primary grow" data-act="send">📤 Wyślij</button>' : `<a class="btn primary grow" href="${inboxUrl()}" target="_blank" rel="noopener">💬 Odpowiedz w skrzynce</a>`}
       <button class="btn" data-act="close" title="Sprawa załatwiona">✅ Zamknij</button>
@@ -635,6 +680,11 @@ function fillThread(c, t) {
     if (!a) return;
     const act = a.dataset.act;
     if (act === 'zoom') return lightbox(a.dataset.src);
+    if (act === 'tpl') {
+      const p = presetById(a.dataset.preset);
+      if (p && ta) { ta.value = p.text; ta.dispatchEvent(new Event('input')); ta.focus(); }
+      return;
+    }
     if (act === 'send') {
       return act1(a, async () => {
         await api(`/api/threads/${psid}/reply`, { body: { text: ta.value } });
@@ -797,9 +847,13 @@ async function renderSettings() {
       <textarea id="rules" style="min-height:200px">${esc(s.page_rules)}</textarea>
     </div>
     <div class="card">
-      <h2>Szablony wiadomości</h2>
-      <div class="label">Odpowiedź na treść komercyjną</div><textarea id="tcom">${esc(s.template_commercial)}</textarea>
-      <div class="label">Odpowiedź przy odrzuceniu (wysyłana od razu po kliknięciu „Odrzuć”; przy „Odrzuć + dlaczego” dopisujesz powód)</div><textarea id="trej">${esc(s.template_reject)}</textarea>
+      <h2>Szybkie odpowiedzi</h2>
+      <div class="stat">Gotowe wiadomości do wysłania jednym dotknięciem. <b>Kiedy pasuje</b> to wskazówka dla AI – na tej podstawie podpowie ⭐ odpowiedni szablon. Szablon „Odrzucenie” wysyła przycisk ⛔ Odrzuć, a „Reklama” – przycisk 💰 Reklama.</div>
+      <div id="presets"></div>
+      <div class="actions"><button class="btn" id="addPreset">➕ Dodaj szablon</button></div>
+    </div>
+    <div class="card">
+      <h2>Podziękowanie po publikacji</h2>
       <div class="label"><span>Podziękowanie po publikacji – wysyłane, gdy post wyjdzie z kolejki na stronę. Znacznik <b>{link}</b> zamieni się w link do posta. Puste = nie wysyłaj.</span></div><textarea id="tpub">${esc(s.template_published)}</textarea>
       <div class="label">Podgląd – tak zobaczy to autor na Messengerze:</div>
       <div class="msgr"><div class="msgr-head">Spotted Koszalin</div><div class="bubble" id="tpubPreview"></div></div>
@@ -825,6 +879,32 @@ async function renderSettings() {
   };
   $('#tpub').addEventListener('input', previewPub);
   previewPub();
+  const presetRow = (p) => `<details class="preset" data-id="${esc(p.id || '')}" ${p.id ? '' : 'open'}>
+    <summary><b class="p-title">${esc(p.name || 'Nowy szablon')}</b> <span class="stat">· ${esc(PRESET_ACTION_LABEL[p.action] || '')}</span></summary>
+    <div class="grid2">
+      <div><div class="label">Nazwa (na przycisku)</div><input type="text" class="p-name" value="${esc(p.name || '')}" maxlength="40"></div>
+      <div><div class="label">Co zrobić z wiadomością po wysłaniu</div>
+        <select class="p-action">${Object.entries(PRESET_ACTION_LABEL).map(([v, l]) => `<option value="${v}" ${p.action === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div>
+    </div>
+    <div class="label">Kiedy pasuje (podpowiedź dla AI)</div><textarea class="p-trigger" rows="2">${esc(p.trigger || '')}</textarea>
+    <div class="label">Treść wiadomości</div><textarea class="p-text">${esc(p.text || '')}</textarea>
+    <div class="actions"><button class="btn danger small" data-del-preset>🗑 Usuń szablon</button></div>
+  </details>`;
+  $('#presets').innerHTML = (s.presets_list || []).map(presetRow).join('');
+  $('#presets').addEventListener('input', (e) => {
+    const el = e.target.closest('.preset');
+    if (e.target.classList.contains('p-name')) $('.p-title', el).textContent = e.target.value || 'Nowy szablon';
+  });
+  $('#presets').addEventListener('click', (e) => {
+    if (!e.target.closest('[data-del-preset]')) return;
+    e.preventDefault();
+    const el = e.target.closest('.preset');
+    if (confirm(`Usunąć szablon „${$('.p-name', el).value}”? (zmiana zapisze się po „Zapisz ustawienia”)`)) el.remove();
+  });
+  $('#addPreset').onclick = () => {
+    $('#presets').insertAdjacentHTML('beforeend', presetRow({ name: '', action: 'reject', trigger: '', text: '' }));
+    $('#presets .preset:last-child .p-name').focus();
+  };
   $('#fbcheck').onclick = (e) => act1(e.target, async () => {
     const d = await api('/api/fb-check');
     const ok = (b) => (b ? '✅' : '❌');
@@ -843,8 +923,12 @@ async function renderSettings() {
   $('#save').onclick = (e) => act1(e.target, async () => {
     settingsCache = await api('/api/settings', { method: 'PUT', body: {
       interval_minutes: $('#interval').value, quiet_from: $('#qfrom').value, quiet_to: $('#qto').value,
-      page_rules: $('#rules').value, template_commercial: $('#tcom').value, template_reject: $('#trej').value,
+      page_rules: $('#rules').value,
       template_published: $('#tpub').value,
+      presets: [...document.querySelectorAll('#presets .preset')].map((el) => ({
+        id: el.dataset.id, name: $('.p-name', el).value.trim(), action: $('.p-action', el).value,
+        trigger: $('.p-trigger', el).value.trim(), text: $('.p-text', el).value,
+      })),
     } });
     toast('Zapisano');
   });
@@ -878,7 +962,8 @@ async function tick() {
 
 (async () => {
   await refreshStatus().catch(() => {});
-  api('/api/settings').then((s) => { settingsCache = s; }).catch(() => {});
+  // Szablony muszą być znane przed pierwszym narysowaniem kart.
+  settingsCache = await api('/api/settings').catch(() => null);
   render();
   setInterval(tick, 8000);
 })();

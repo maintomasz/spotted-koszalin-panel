@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { db, DATA_DIR, MEDIA_DIR, getSubmission, updateSubmission, parseRow } from './db.js';
-import { getSettings, saveSettings } from './settings.js';
+import { getSettings, saveSettings, getPresets } from './settings.js';
 import { aiEnabled, AI_MODEL, suggestRedactions } from './ai.js';
 import { fbEnabled, verifySignature, saveMedia, diagnose, editPost } from './facebook.js';
 import { listOpenThreads, getThread, upsertThread, sendAndLog, logMessage } from './threads.js';
@@ -210,13 +210,47 @@ app.post('/api/submissions/:id/to-thread', (req, res) => {
   const sub = load(req, res, ['new', 'failed']);
   if (!sub) return;
   if (!sub.sender_id) return res.status(400).json({ error: 'To nie jest wiadomość z Facebooka – nie ma z kim rozmawiać.' });
+  moveToThread(sub);
+  res.json({ ok: true });
+});
+
+function moveToThread(sub, preset = null) {
   updateSubmission(sub.id, { status: 'conversation', decided_at: Date.now() });
   const cur = getThread(sub.sender_id);
   upsertThread(sub.sender_id, {
     state: 'open', reason: 'conversation', submission_id: sub.id, sender_name: sub.sender_name || cur?.sender_name || null,
     summary: sub.ai_result?.summary || null, last_in_at: sub.last_user_message_at,
+    preset: preset || sub.ai_result?.suggested_preset || null,
   });
-  res.json({ ok: true });
+}
+
+// Szybka odpowiedź: wysyła szablon (po ewentualnej edycji) i wykonuje jego akcję.
+app.post('/api/submissions/:id/preset', async (req, res) => {
+  const sub = load(req, res, ['new', 'failed']);
+  if (!sub) return;
+  const preset = getPresets().find((p) => p.id === String(req.body.presetId || ''));
+  if (!preset) return res.status(404).json({ error: 'Nie ma takiego szablonu – odśwież panel.' });
+  const text = String(req.body.text ?? preset.text).trim();
+  const send = req.body.send !== false;
+  let replyStatus = null;
+  if (send && text) {
+    if (sub.source === 'facebook' && sub.sender_id && Date.now() - sub.last_user_message_at > 24 * 3600 * 1000) {
+      return res.status(409).json({ error: 'Minęło 24 h od wiadomości – Facebook nie pozwala już odpisać. Odznacz wysyłanie albo odpowiedz ze skrzynki.' });
+    }
+    try {
+      replyStatus = await reply(sub, text, `preset_${preset.id}`);
+    } catch (err) {
+      return res.status(502).json({ error: 'Nie udało się wysłać: ' + err.message });
+    }
+  }
+  if (preset.action === 'conversation') {
+    if (!sub.sender_id) return res.status(400).json({ error: 'To nie jest wiadomość z Facebooka – nie ma z kim rozmawiać.' });
+    moveToThread(sub, preset.id);
+    updateSubmission(sub.id, { reply_sent: replyStatus });
+  } else {
+    updateSubmission(sub.id, { status: preset.action === 'commercial' ? 'commercial' : 'rejected', decided_at: Date.now(), reply_sent: replyStatus });
+  }
+  res.json({ ok: true, reply: replyStatus, action: preset.action });
 });
 
 app.post('/api/submissions/:id/restore', (req, res) => {
@@ -244,11 +278,16 @@ app.post('/api/submissions/:id/reanalyze', (req, res) => {
 
 app.post('/api/queue/reflow', (_req, res) => { reflowQueue(); res.json({ ok: true }); });
 
-app.get('/api/settings', (_req, res) => res.json(getSettings()));
+const settingsForClient = () => { const s = getSettings(); return { ...s, presets_list: getPresets(s) }; };
+app.get('/api/settings', (_req, res) => res.json(settingsForClient()));
 app.put('/api/settings', (req, res) => {
-  const s = saveSettings(req.body || {});
+  try {
+    saveSettings(req.body || {});
+  } catch (err) {
+    return res.status(400).json({ error: 'Nie zapisano: ' + err.message });
+  }
   reflowQueue();
-  res.json(s);
+  res.json(settingsForClient());
 });
 
 // Testowa wiadomość z panelu (zanim podłączymy Facebooka).

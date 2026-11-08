@@ -93,7 +93,7 @@ async function runAi() {
         // Rozmowa z adminem, a nie post → przenosimy do „Rozmów” jako otwarty wątek.
         if (!changed && result.verdict === 'conversation' && fresh.sender_id) {
           updateSubmission(id, { status: 'conversation', decided_at: Date.now() });
-          openThread(fresh.sender_id, { reason: 'conversation', summary: result.summary, submission_id: id, last_in_at: fresh.last_user_message_at, sender_name: fresh.sender_name });
+          openThread(fresh.sender_id, { reason: 'conversation', summary: result.summary, preset: result.suggested_preset || null, submission_id: id, last_in_at: fresh.last_user_message_at, sender_name: fresh.sender_name });
         }
       } catch (err) {
         console.error(`[AI] zgłoszenie #${id}:`, err.message);
@@ -173,10 +173,12 @@ async function runFollowups() {
       const decision = recentDecision(senderId) || (getThread(senderId)?.submission_id ? getSubmission(getThread(senderId).submission_id) : null);
       let kind = 'question';
       let summary = '';
+      let preset = null;
       try {
-        const { result } = await classifyFollowup({ newText: text, hasImages: atts.some((a) => a.type === 'image'), decision });
+        const { result } = await classifyFollowup({ newText: text, hasImages: atts.some((a) => a.type === 'image'), decision, settings: getSettings() });
         kind = result.kind;
         summary = result.summary;
+        preset = result.suggested_preset || null;
       } catch (err) {
         console.error('[Po decyzji] klasyfikacja nie powiodła się – traktuję jako pytanie:', err.message);
         summary = 'AI nie oceniło – sprawdź wiadomość.';
@@ -196,7 +198,7 @@ async function runFollowups() {
         mark(null);
         const reasonBy = { published: 'after_published', rejected: 'after_rejected', commercial: 'after_commercial', handled: 'after_handled', conversation: 'conversation' };
         openThread(senderId, {
-          reason: reasonBy[decision?.status] || 'conversation', summary, submission_id: decision?.id ?? null,
+          reason: reasonBy[decision?.status] || 'conversation', summary, preset, submission_id: decision?.id ?? null,
           last_in_at: msgs[msgs.length - 1].created_at,
         });
         console.log(`[Po decyzji] pytanie – otwarto rozmowę`);
