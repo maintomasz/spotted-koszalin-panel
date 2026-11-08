@@ -744,7 +744,10 @@ function fillThread(c, t) {
 function renderList(items) {
   const head = tab === 'queued' && settingsCache
     ? `<div class="card stat">Odstęp między postami: <b>${esc(settingsCache.interval_minutes)} min</b> · cisza nocna: <b>${esc(settingsCache.quiet_from)}–${esc(settingsCache.quiet_to)}</b>
-       <button class="ghost small" id="reflow" style="float:right">Przelicz kolejkę</button></div>` : '';
+       <button class="ghost small" id="reflow" style="float:right">Przelicz kolejkę</button></div>`
+    : tab === 'rejected' && items.length
+      ? `<div class="card list-head"><span class="stat">Odrzucone i obsłużone: <b>${items.length}</b> · trzymane na serwerze maks. 180 dni</span>
+         <button class="btn danger small" id="clearRejected">🗑 Wyczyść odrzucone</button></div>` : '';
   if (!items.length) {
     const msg = { queued: 'Kolejka jest pusta.', published: 'Nic jeszcze nie opublikowano.', commercial: 'Brak zgłoszeń komercyjnych.', rejected: 'Brak odrzuconych.', failed: 'Brak błędów.' }[tab];
     main.innerHTML = head + `<div class="empty">${msg}</div>`;
@@ -752,6 +755,15 @@ function renderList(items) {
     main.innerHTML = head + items.map(listCard).join('');
   }
   $('#reflow')?.addEventListener('click', async () => { await api('/api/queue/reflow', { body: {} }); toast('Przeliczono kolejkę'); render(); });
+  $('#clearRejected')?.addEventListener('click', (e) => {
+    if (!confirm(`Usunąć na stałe ${items.length} odrzuconych wiadomości razem ze zdjęciami i historią?\n\nTego nie da się cofnąć.`)) return;
+    act1(e.target, async () => {
+      const r = await api('/api/submissions/clear-rejected', { body: {} });
+      toast(`🗑 Usunięto ${r.deleted} odrzuconych wiadomości`);
+      await refreshStatus();
+      render();
+    });
+  });
   main.onclick = async (e) => {
     const a = e.target.closest('[data-act]');
     if (!a) return;

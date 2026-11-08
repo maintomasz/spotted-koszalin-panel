@@ -230,3 +230,6 @@ details.preset { border: 1px solid var(--border); border-radius: 10px; padding: 
 details.preset summary { cursor: pointer; }
 details.preset textarea.p-text { min-height: 130px; }
 select.p-action { width: 100%; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font: inherit; }
+
+.list-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.btn.small { padding: 7px 12px; font-size: 13.5px; }

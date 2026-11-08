@@ -4,11 +4,11 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { db, DATA_DIR, MEDIA_DIR, getSubmission, updateSubmission, parseRow } from './db.js';
+import { db, DATA_DIR, MEDIA_DIR, getSubmission, updateSubmission, parseRow, deleteSubmissionsWhere } from './db.js';
 import { getSettings, saveSettings, getPresets } from './settings.js';
 import { aiEnabled, AI_MODEL, suggestRedactions } from './ai.js';
 import { fbEnabled, verifySignature, saveMedia, diagnose, editPost } from './facebook.js';
-import { listOpenThreads, getThread, upsertThread, sendAndLog, logMessage } from './threads.js';
+import { listOpenThreads, getThread, upsertThread, sendAndLog, logMessage, deleteMessagesWhere } from './threads.js';
 import { handleWebhook, addToInbox, createSubmission } from './inbox.js';
 import { nextSlot, reflowQueue, startWorkers } from './scheduler.js';
 import { seedDemo } from './demo-seed.js';
@@ -281,6 +281,18 @@ app.post('/api/submissions/:id/reanalyze', (req, res) => {
 });
 
 app.post('/api/queue/reflow', (_req, res) => { reflowQueue(); res.json({ ok: true }); });
+
+// Trwałe wyczyszczenie listy „Odrzucone” (odrzucone + obsłużone ręcznie): zgłoszenia, zdjęcia i powiązana historia.
+app.post('/api/submissions/clear-rejected', (_req, res) => {
+  const ids = db.prepare("SELECT id FROM submissions WHERE status IN ('rejected','handled')").all().map((r) => r.id);
+  if (!ids.length) return res.json({ ok: true, deleted: 0 });
+  const ph = ids.map(() => '?').join(',');
+  deleteMessagesWhere(`submission_id IN (${ph})`, ...ids);
+  const n = deleteSubmissionsWhere(`id IN (${ph})`, ...ids);
+  db.prepare(`UPDATE threads SET submission_id = NULL WHERE submission_id IN (${ph})`).run(...ids);
+  console.log(`[Czyszczenie] usunięto ${n} odrzuconych zgłoszeń`);
+  res.json({ ok: true, deleted: n });
+});
 
 const settingsForClient = () => { const s = getSettings(); return { ...s, presets_list: getPresets(s) }; };
 app.get('/api/settings', (_req, res) => res.json(settingsForClient()));
