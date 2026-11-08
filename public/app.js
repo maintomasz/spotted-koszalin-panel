@@ -8,8 +8,10 @@ const cards = new Map(); // id -> { el, sig, dirty }
 
 const VERDICT = {
   publish: '✅ Do publikacji', needs_edit: '✏️ Wymaga poprawek', commercial: '💰 Komercyjne',
-  reject: '⛔ Odrzucić', manual_check: '👀 Sprawdź ręcznie',
+  reject: '⛔ Odrzucić', manual_check: '👀 Sprawdź ręcznie', conversation: '💬 Rozmowa',
 };
+const isInboxTab = () => tab === 'new' || tab === 'conversations';
+const inboxUrl = () => `https://business.facebook.com/latest/inbox/all/${status.pageId ? `?asset_id=${encodeURIComponent(status.pageId)}` : ''}`;
 const CATEGORY = {
   pytanie_polecenie: 'pytanie / polecenie', zgubione_znalezione: 'zgubione / znalezione', zwierzeta: 'zwierzęta',
   ostrzezenie: 'ostrzeżenie', spotted: 'spotted', podziekowanie: 'podziękowanie', skarga_problem: 'skarga / problem',
@@ -89,7 +91,7 @@ async function render() {
   try {
     if (tab === 'settings') return renderSettings();
     const items = await api(`/api/submissions?status=${tab}`);
-    if (tab === 'new') return renderInbox(items);
+    if (isInboxTab()) return renderInbox(items);
     return renderList(items);
   } catch (err) {
     main.innerHTML = `<div class="empty error-text">${esc(err.message)}</div>`;
@@ -101,7 +103,9 @@ function renderInbox(items) {
   const ids = new Set(items.map((i) => i.id));
   for (const [id, c] of cards) if (!ids.has(id)) { c.el.remove(); cards.delete(id); }
   if (!items.length) {
-    main.innerHTML = `<div class="empty">Brak nowych wiadomości 🎉<br><small>Nowe pojawią się tu automatycznie.</small></div>`;
+    main.innerHTML = tab === 'conversations'
+      ? `<div class="empty">Brak rozmów do obsłużenia 💬<br><small>Tu trafiają wiadomości, które nie są postami – pytania do admina, powitania, dalszy ciąg rozmowy.</small></div>`
+      : `<div class="empty">Brak nowych wiadomości 🎉<br><small>Nowe pojawią się tu automatycznie.</small></div>`;
     cards.clear();
     return;
   }
@@ -184,12 +188,18 @@ function fillCard(c, s) {
     <div class="post" data-act="edit" title="Dotknij, aby edytować">${suggested ? esc(suggested) : '<i>(bez tekstu)</i>'}</div>
     <textarea class="post-edit" hidden>${esc(suggested)}</textarea>
     ${changed ? `<details class="orig"><summary>Oryginał (AI poprawiło tekst)</summary><div class="original">${esc(s.original_text || '(bez tekstu)')}</div><a data-act="use-original">↩︎ wstaw oryginał</a></details>` : ''}
+    ${verdict === 'conversation' ? `
+    <div class="decide">
+      <a class="btn primary grow" href="${inboxUrl()}" target="_blank" rel="noopener">💬 Odpowiedz</a>
+      <button class="btn" data-act="handled" title="Odpisałem – usuń z listy">✋ Obsłużone</button>
+      <button class="btn icon" data-act="more" title="Więcej opcji">⋯</button>
+    </div>` : `
     <div class="decide">
       <button class="btn primary grow" data-act="approve">✅ Zatwierdź</button>
       <button class="btn icon danger" data-act="reject-quick" title="Odrzuć (z wiadomością z szablonu)">⛔</button>
       <button class="btn icon money" data-act="commercial" title="Komercyjne – oferta reklamy">💰</button>
       <button class="btn icon" data-act="more" title="Więcej opcji">⋯</button>
-    </div>
+    </div>`}
     <div class="sub-slot"></div>`;
 
   const ta = $('.post-edit', el);
@@ -262,6 +272,7 @@ function fillCard(c, s) {
     if (act === 'more') {
       if (slot.innerHTML) { slot.innerHTML = ''; return; }
       slot.innerHTML = `<div class="sub-panel menu">
+        ${verdict === 'conversation' ? '<button class="btn" data-act="approve">✅ To jednak post – zatwierdź do kolejki</button>' : ''}
         <button class="btn" data-act="reject">⛔ Odrzuć z powodem</button>
         <button class="btn" data-act="approve-now">🚀 Opublikuj od razu (bez kolejki)</button>
         <button class="btn" data-act="edit">✏️ Edytuj tekst</button>
@@ -302,7 +313,7 @@ async function act1(btn, fn) {
 function removeCard(id) {
   const c = cards.get(id);
   if (c) { c.el.remove(); cards.delete(id); }
-  if (!cards.size && tab === 'new') render();
+  if (!cards.size && isInboxTab()) render();
   refreshStatus();
 }
 
@@ -464,7 +475,7 @@ async function renderSettings() {
 async function tick() {
   try {
     await refreshStatus();
-    if (tab === 'new') render();
+    if (isInboxTab()) render();
   } catch { /* chwilowy brak połączenia */ }
 }
 

@@ -75,7 +75,12 @@ async function runAi() {
       const sub = getSubmission(id);
       const startedVersion = sub.updated_at;
       try {
-        const { result, cost } = await analyzeSubmission(sub, getSettings());
+        // Kontekst: wcześniejsze zgłoszenia tej osoby z 24 h – żeby AI rozpoznało ciąg dalszy rozmowy.
+        const history = sub.sender_id
+          ? db.prepare(`SELECT * FROM submissions WHERE sender_id = ? AND id != ? AND created_at > ? ORDER BY created_at DESC LIMIT 5`)
+            .all(sub.sender_id, sub.id, Date.now() - 24 * 3600 * 1000).map(parseRow).reverse()
+          : [];
+        const { result, cost } = await analyzeSubmission(sub, getSettings(), history);
         const fresh = getSubmission(id);
         // Jeśli w trakcie oceny doszła nowa wiadomość od tej osoby – oceniamy jeszcze raz.
         const changed = fresh.updated_at !== startedVersion;

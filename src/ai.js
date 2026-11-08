@@ -16,7 +16,7 @@ const PRICES = {
   'claude-haiku-5-5': [0.1, 0.5],
 };
 
-export const VERDICTS = ['publish', 'needs_edit', 'commercial', 'reject', 'manual_check'];
+export const VERDICTS = ['publish', 'needs_edit', 'commercial', 'reject', 'manual_check', 'conversation'];
 const ISSUE_TYPES = [
   'dane_osobowe', 'wizerunek_twarz', 'tablica_rejestracyjna', 'dokument_tozsamosci', 'pomowienie_znieslawienie',
   'zniewaga_wulgaryzmy', 'mowa_nienawisci', 'przemoc_grozby', 'tresci_seksualne', 'nielegalne', 'reklama_komercja',
@@ -84,6 +84,10 @@ Werdykty:
 - "commercial" – treść komercyjna (sprzedaż, reklama, promocja firmy, oferta pracy od firmy).
 - "reject" – nie nadaje się (łamie prawo/standardy, hejt, spam, bezsensowna, prywatna wiadomość do admina, test).
 - "manual_check" – nie da się ocenić (np. sprawa niejasna, kontrowersyjna, wymaga weryfikacji faktów).
+- "conversation" – to NIE jest treść do publikacji, tylko rozmowa z administracją strony: pytania do admina (jak dodać post, czy post przejdzie, kiedy będzie opublikowany, ile kosztuje reklama), powitania bez treści („hej”, „jest ktoś?”), odpowiedzi w trwającej rozmowie, podziękowania, prośby o usunięcie lub poprawienie opublikowanego posta, uwagi do działania strony. Moderator odpowie ręcznie ze skrzynki strony. Przy "conversation" zostaw suggested_text pusty, a w summary napisz, o co chodzi i co warto odpowiedzieć (jeśli to zapytanie o płatną reklamę – zaznacz, że to potencjalny klient).
+Uwaga: zapytanie o CENĘ reklamy to "conversation" (ktoś chce kupić reklamę), a "commercial" to próba darmowego opublikowania treści reklamowej.
+
+Jeśli dostaniesz kontekst – wcześniejsze wiadomości tej samej osoby z ostatnich 24 h – użyj go, żeby rozpoznać, czy nowa wiadomość jest dalszym ciągiem rozmowy, czy osobnym zgłoszeniem do publikacji. Oceniaj jednak tylko NOWĄ wiadomość.
 
 Zasady pisania suggested_text:
 - Zachowaj sens i styl autora, popraw oczywiste literówki i interpunkcję, nie dopisuj nic od siebie.
@@ -106,7 +110,7 @@ function getClient() {
 
 const IMG_TYPES = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
 
-export async function analyzeSubmission(sub, settings) {
+export async function analyzeSubmission(sub, settings, history = []) {
   if (!aiEnabled()) return { result: demoAnalyze(sub), cost: 0 };
 
   const images = (sub.attachments || []).filter((a) => a.type === 'image' && a.file);
@@ -121,9 +125,14 @@ export async function analyzeSubmission(sub, settings) {
   }
   const videoNote = sub.has_video ? '\nUWAGA: wiadomość zawiera też WIDEO, którego nie widzisz – moderator obejrzy je sam. Oceń tylko tekst i zdjęcia.' : '';
   const skipNote = skipped ? `\nUWAGA: ${skipped} załącznik(ów) nie dało się przesłać do oceny.` : '';
+  const STATUS_PL = { published: 'opublikowane', queued: 'w kolejce', rejected: 'odrzucone', commercial: 'komercyjne', handled: 'obsłużone ręcznie', new: 'czeka na decyzję', failed: 'błąd publikacji' };
+  const historyText = history.length
+    ? `\n\nKONTEKST – wcześniejsze wiadomości tej samej osoby z ostatnich 24 h (tylko do zrozumienia sytuacji, nie oceniaj ich):\n<wczesniejsze_wiadomosci>\n${history.map((h) =>
+      `- [${STATUS_PL[h.status] || h.status}${h.ai_result?.verdict ? `, ocena AI: ${h.ai_result.verdict}` : ''}] ${(h.original_text || '(tylko załączniki)').slice(0, 500)}`).join('\n')}\n</wczesniejsze_wiadomosci>`
+    : '';
   content.push({
     type: 'text',
-    text: `Oceń poniższą wiadomość wysłaną na skrzynkę strony. Liczba zdjęć: ${content.length}.${videoNote}${skipNote}\n\n<wiadomosc_od_uzytkownika>\n${sub.original_text || '(brak tekstu)'}\n</wiadomosc_od_uzytkownika>`,
+    text: `Oceń poniższą NOWĄ wiadomość wysłaną na skrzynkę strony. Liczba zdjęć: ${content.length}.${videoNote}${skipNote}${historyText}\n\n<wiadomosc_od_uzytkownika>\n${sub.original_text || '(brak tekstu)'}\n</wiadomosc_od_uzytkownika>`,
   });
 
   const response = await getClient().beta.messages.create({
@@ -171,6 +180,9 @@ function demoAnalyze(sub) {
     image_notes: images.map((_, i) => ({ image_number: i + 1, ok_to_publish: true, needs_anonymization: false, what_to_hide: '' })),
   };
   const tag = '[DEMO – bez AI] ';
+  if (has(/^(hej|hejka|cześć|czesc|siema|dzień dobry|dzien dobry|witam|halo)[\s!.?]*$|jest ktoś|admin|ile kosztuje reklam|usuńcie|usuncie/)) {
+    return { ...base, verdict: 'conversation', suggested_text: '', summary: tag + 'Wygląda na rozmowę z adminem, nie na post.' };
+  }
   if (has(/sprzedam|sprzedaż|promocj|rabat|zapraszamy do naszego|oferujemy|cena\s*\d|\d+\s*zł|zatrudnimy/)) {
     return { ...base, verdict: 'commercial', category: 'komercyjne', suggested_text: '',
       summary: tag + 'Wygląda na ofertę sprzedaży/reklamę.', commercial_reason: 'Słowa kluczowe sprzedażowe.',

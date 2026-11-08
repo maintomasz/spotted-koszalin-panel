@@ -108,8 +108,10 @@ app.use(express.json({ limit: '40mb' }));
 app.use('/media', express.static(MEDIA_DIR, { maxAge: '7d' }));
 app.use(express.static(path.join(here, '..', 'public')));
 
+const IS_CONV = "json_extract(ai_result, '$.verdict') = 'conversation'";
 const LISTS = {
-  new: "status = 'new' ORDER BY created_at ASC",
+  new: `status = 'new' AND NOT COALESCE(${IS_CONV}, 0) ORDER BY created_at ASC`,
+  conversations: `status = 'new' AND ${IS_CONV} ORDER BY created_at ASC`,
   queued: "status IN ('queued','publishing') ORDER BY scheduled_at ASC",
   published: "status = 'published' ORDER BY published_at DESC LIMIT 100",
   failed: "status = 'failed' ORDER BY id DESC",
@@ -121,7 +123,7 @@ app.get('/api/status', (_req, res) => {
   const since = Date.now() - 30 * 24 * 3600 * 1000;
   const cost = db.prepare('SELECT COALESCE(SUM(ai_cost_usd),0) AS c, COUNT(*) AS n FROM submissions WHERE created_at > ?').get(since);
   res.json({
-    fb: fbEnabled(), ai: aiEnabled(), model: AI_MODEL,
+    fb: fbEnabled(), ai: aiEnabled(), model: AI_MODEL, pageId: process.env.FB_PAGE_ID || null,
     cost30d: cost.c, count30d: cost.n,
     counts: Object.fromEntries(Object.keys(LISTS).map((k) => [k,
       db.prepare(`SELECT COUNT(*) AS n FROM submissions WHERE ${LISTS[k].split(' ORDER BY')[0]}`).get().n])),
