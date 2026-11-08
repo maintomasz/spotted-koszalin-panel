@@ -157,3 +157,8 @@ a.btn.primary { background: var(--accent); border-color: var(--accent); color: v
 .logo { display: inline-flex; align-items: center; gap: 9px; }
 .logo-img { width: 30px; height: 30px; border-radius: 7px; object-fit: cover; box-shadow: 0 0 0 1px var(--border); }
 @media (max-width: 600px) { .logo-img { width: 26px; height: 26px; border-radius: 6px; } }
+
+/* Logo-napis (białe SVG): w jasnym motywie odwracamy na czarne */
+.logo-mark { display: block; height: 30px; width: auto; filter: invert(1); }
+@media (prefers-color-scheme: dark) { .logo-mark { filter: none; } }
+@media (max-width: 600px) { .logo-mark { height: 24px; } }

@@ -84,6 +84,7 @@ app.get(['/polityka-prywatnosci', '/privacy'], publicPage('polityka-prywatnosci.
 app.get(['/usuwanie-danych', '/data-deletion'], publicPage('usuwanie-danych.html'));
 app.get('/strony.css', publicPage('strony.css'));
 app.get('/logo.jpg', publicPage('logo.jpg'));
+app.get('/logo-white.svg', publicPage('logo-white.svg'));
 app.get('/favicon.png', publicPage('favicon.png'));
 app.get(['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png'], publicPage('apple-touch-icon.png'));
 
