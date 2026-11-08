@@ -849,6 +849,38 @@ async function renderPerson(psid) {
   }
 }
 
+// ---------- Statystyki zgodności AI ----------
+const DECISION_LABEL = { publish: '✅ zatwierdzone', reject: '⛔ odrzucone', commercial: '💰 reklama', conversation: '💬 rozmowa', handled: '✋ obsłużone' };
+const VERDICT_SHORT = { publish: '✅ Do publikacji', needs_edit: '✏️ Wymaga poprawek', reject: '⛔ Odrzucić', commercial: '💰 Komercyjne', conversation: '💬 Rozmowa', manual_check: '👀 Sprawdź ręcznie' };
+function renderStats(st) {
+  if (!st.withAi) return `<div class="stat">Brak danych z ostatnich ${st.days} dni. Statystyki pojawią się po pierwszych decyzjach podjętych od dziś.</div>`;
+  const pct = (a, b) => (b ? `${Math.round((a / b) * 100)}%` : '–');
+  const cols = Object.keys(DECISION_LABEL);
+  const rows = Object.keys(VERDICT_SHORT).filter((v) => st.matrix[v]);
+  const t = st.auto.textOnly;
+  const cats = Object.entries(st.disagreeByCat).sort((a, b) => b[1] - a[1]).slice(0, 4);
+  return `
+    <div class="kpis">
+      <div class="kpi"><div class="kpi-v">${st.agreePct != null ? st.agreePct + '%' : '–'}</div><div class="kpi-l">zgodności (${st.agree} z ${st.judged})</div></div>
+      <div class="kpi"><div class="kpi-v">${st.withAi}</div><div class="kpi-l">decyzji z oceną AI</div></div>
+      <div class="kpi"><div class="kpi-v">${st.preset.pairs ? pct(st.preset.agree, st.preset.pairs) : '–'}</div><div class="kpi-l">trafnych podpowiedzi szablonu</div></div>
+    </div>
+    <div class="label">AI proponowało → Ty zrobiłeś</div>
+    <div class="table-wrap"><table class="matrix">
+      <tr><th></th>${cols.map((c) => `<th>${DECISION_LABEL[c]}</th>`).join('')}</tr>
+      ${rows.map((v) => `<tr><th>${VERDICT_SHORT[v]}</th>${cols.map((c) => {
+        const n = st.matrix[v][c] || 0;
+        const good = { publish: ['publish'], needs_edit: ['publish'], reject: ['reject'], commercial: ['commercial'], conversation: ['conversation', 'handled'] }[v]?.includes(c);
+        return `<td class="${n ? (good ? 'ok' : v === 'manual_check' ? '' : 'bad') : 'zero'}">${n || '·'}</td>`;
+      }).join('')}</tr>`).join('')}
+    </table></div>
+    <div class="label">Gdyby automat publikował sam „✅ Do publikacji” bez zdjęć</div>
+    <div class="stat">${t.total ? `<b>${t.total}</b> takich wiadomości: <b>${t.ok}</b> zatwierdziłeś bez zmian (${pct(t.ok, t.total)}), <b>${t.edited}</b> poprawiałeś tekst, <b>${t.wrong}</b> ${t.wrong === 1 ? 'nie przeszła' : 'nie przeszło'} (byłby błąd automatu).` : 'Jeszcze brak takich wiadomości.'}
+      ${st.auto.withImages.total ? `<br>Ze zdjęciami: ${st.auto.withImages.total}, z czego bez żadnych poprawek: ${st.auto.withImages.ok}.` : ''}</div>
+    ${cats.length ? `<div class="label">Najczęstsze rozbieżności – kategorie</div><div class="stat">${cats.map(([k, n]) => `${esc(CATEGORY[k] || k)}: <b>${n}</b>`).join(' · ')}</div>` : ''}
+    ${st.manualCheck ? `<div class="stat" style="margin-top:6px">„👀 Sprawdź ręcznie” (nie liczone do zgodności): ${st.manualCheck}</div>` : ''}`;
+}
+
 // ---------- Pozostałe listy ----------
 function renderList(items) {
   const head = tab === 'queued' && settingsCache
@@ -949,6 +981,14 @@ async function renderSettings() {
       <div class="actions"><button class="btn" id="fbcheck">Sprawdź połączenie z Facebookiem</button></div>
       <div id="fbresult"></div>
     </div>
+    <div class="card" id="statsCard">
+      <h2>📊 Zgodność AI z Twoimi decyzjami</h2>
+      <div class="stat">Panel anonimowo zapisuje, co proponowało AI, a co Ty zdecydowałeś (bez treści i danych osób). Po kilku tygodniach zobaczysz, czy automatyczna publikacja ma sens.</div>
+      <div class="row" style="display:flex;gap:6px;margin:10px 0">
+        ${[7, 30, 90].map((d) => `<button class="chip-btn" data-days="${d}">${d} dni</button>`).join('')}
+      </div>
+      <div id="statsBody"><span class="spinner"></span></div>
+    </div>
     <div class="card">
       <h2>Publikowanie</h2>
       <div class="label">Odstęp między postami (minuty) – posty wychodzą o każdej porze, także w nocy</div>
@@ -1025,6 +1065,13 @@ async function renderSettings() {
     $('#presets').insertAdjacentHTML('beforeend', presetRow({ name: '', action: 'reject', trigger: '', text: '' }));
     $('#presets .preset:last-child .p-name').focus();
   };
+  const loadStats = async (days = 30) => {
+    document.querySelectorAll('#statsCard [data-days]').forEach((b) => b.classList.toggle('sugg', Number(b.dataset.days) === days));
+    const st = await api(`/api/stats?days=${days}`);
+    $('#statsBody').innerHTML = renderStats(st);
+  };
+  $('#statsCard').addEventListener('click', (e) => { const b = e.target.closest('[data-days]'); if (b) loadStats(Number(b.dataset.days)); });
+  loadStats(30).catch(() => { $('#statsBody').textContent = 'Nie udało się wczytać statystyk.'; });
   $('#fbcheck').onclick = (e) => act1(e.target, async () => {
     const d = await api('/api/fb-check');
     const ok = (b) => (b ? '✅' : '❌');

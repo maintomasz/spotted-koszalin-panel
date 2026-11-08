@@ -13,6 +13,7 @@ import { handleWebhook, addToInbox, createSubmission } from './inbox.js';
 import { nextSlot, reflowQueue, startWorkers } from './scheduler.js';
 import { seedDemo } from './demo-seed.js';
 import { searchMailbox, personDetail, refreshPersonFromFacebook } from './mailbox.js';
+import { logDecision, forgetDecision, getStats } from './stats.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -174,6 +175,7 @@ app.post('/api/submissions/:id/approve', (req, res) => {
     status: 'queued', final_text: text, final_images: valid, scheduled_at: when, decided_at: Date.now(), publish_error: null,
     flags: String(sub.flags || '').split(',').filter((f) => f && f !== 'author_edit').join(','),
   });
+  logDecision(sub, 'publish', { finalText: text });
   res.json({ ok: true, scheduled_at: when });
 });
 
@@ -187,6 +189,7 @@ app.post('/api/submissions/:id/reject', async (req, res) => {
     replyStatus = 'błąd: ' + err.message;
   }
   updateSubmission(sub.id, { status: 'rejected', decided_at: Date.now(), reply_sent: replyStatus });
+  logDecision(sub, 'reject', { usedPreset: req.body.message ? 'odrzucenie' : null });
   res.json({ ok: true, reply: replyStatus });
 });
 
@@ -200,6 +203,7 @@ app.post('/api/submissions/:id/commercial', async (req, res) => {
     return res.status(502).json({ error: 'Nie udało się wysłać wiadomości: ' + err.message });
   }
   updateSubmission(sub.id, { status: 'commercial', decided_at: Date.now(), reply_sent: replyStatus });
+  logDecision(sub, 'commercial', { usedPreset: req.body.message ? 'reklama' : null });
   res.json({ ok: true, reply: replyStatus });
 });
 
@@ -207,6 +211,7 @@ app.post('/api/submissions/:id/handled', (req, res) => {
   const sub = load(req, res, ['new', 'failed']);
   if (!sub) return;
   updateSubmission(sub.id, { status: 'handled', decided_at: Date.now() });
+  logDecision(sub, 'handled');
   res.json({ ok: true });
 });
 
@@ -216,6 +221,7 @@ app.post('/api/submissions/:id/to-thread', (req, res) => {
   if (!sub) return;
   if (!sub.sender_id) return res.status(400).json({ error: 'To nie jest wiadomość z Facebooka – nie ma z kim rozmawiać.' });
   moveToThread(sub);
+  logDecision(sub, 'conversation');
   res.json({ ok: true });
 });
 
@@ -251,9 +257,11 @@ app.post('/api/submissions/:id/preset', async (req, res) => {
   if (preset.action === 'conversation') {
     if (!sub.sender_id) return res.status(400).json({ error: 'To nie jest wiadomość z Facebooka – nie ma z kim rozmawiać.' });
     moveToThread(sub, preset.id);
+    logDecision(sub, 'conversation', { usedPreset: preset.id });
     updateSubmission(sub.id, { reply_sent: replyStatus });
   } else {
     updateSubmission(sub.id, { status: preset.action === 'commercial' ? 'commercial' : 'rejected', decided_at: Date.now(), reply_sent: replyStatus });
+    logDecision(sub, preset.action === 'commercial' ? 'commercial' : 'reject', { usedPreset: preset.id });
   }
   res.json({ ok: true, reply: replyStatus, action: preset.action });
 });
@@ -262,6 +270,7 @@ app.post('/api/submissions/:id/restore', (req, res) => {
   const sub = load(req, res, ['queued', 'rejected', 'handled', 'commercial', 'failed', 'conversation']);
   if (!sub) return;
   updateSubmission(sub.id, { status: 'new', scheduled_at: null });
+  forgetDecision(sub.id);
   if (sub.status === 'queued') reflowQueue();
   if (sub.status === 'conversation' && sub.sender_id) upsertThread(sub.sender_id, { state: 'closed' });
   res.json({ ok: true });
@@ -476,6 +485,8 @@ app.post('/api/mailbox/:psid/facebook', async (req, res) => {
     res.status(502).json({ error: err.message });
   }
 });
+
+app.get('/api/stats', (req, res) => res.json(getStats(Math.min(365, Math.max(1, Number(req.query.days) || 30)))));
 
 app.get('/api/fb-check', async (_req, res) => {
   try { res.json(await diagnose()); } catch (err) { res.status(500).json({ error: err.message }); }
