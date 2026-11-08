@@ -162,7 +162,11 @@ app.post('/api/submissions/:id/approve', (req, res) => {
   if (!sub) return;
   const text = String(req.body.text ?? '').trim();
   const images = Array.isArray(req.body.images) ? req.body.images.map(String) : [];
-  const valid = images.filter((f) => (sub.attachments || []).some((a) => a.file === f));
+  // Zawsze bierzemy AKTUALNY plik (np. zakrytą wersję), nawet jeśli przeglądarka podała nazwę oryginału.
+  const valid = [...new Set(images.map((f) => findAttachment(sub, f)?.att.file).filter(Boolean))];
+  if (images.length && valid.length < images.length) {
+    return res.status(409).json({ error: 'Nie znaleziono zaznaczonego zdjęcia – odśwież panel i zatwierdź jeszcze raz. Nic nie zostało opublikowane.' });
+  }
   if (!text && valid.length === 0) return res.status(400).json({ error: 'Post nie może być pusty.' });
   const when = req.body.now ? Date.now() : nextSlot();
   updateSubmission(sub.id, {
@@ -370,9 +374,10 @@ app.post('/api/threads/:psid/to-post', (req, res) => {
 });
 
 // ---------- Zakrywanie danych na zdjęciach ----------
+// Zdjęcie szukamy po aktualnym pliku ALBO po oryginale (po zakryciu nazwa pliku się zmienia).
 function findAttachment(sub, file) {
   const atts = sub.attachments || [];
-  const i = atts.findIndex((a) => a.type === 'image' && a.file === file);
+  const i = atts.findIndex((a) => a.type === 'image' && (a.file === file || a.orig === file));
   return i < 0 ? null : { atts, i, att: atts[i] };
 }
 
@@ -387,8 +392,14 @@ app.post('/api/submissions/:id/redact-suggest', async (req, res) => {
     const { result, cost } = await suggestRedactions({
       file: f.att.orig || f.att.file, mime: f.att.origMime || f.att.mime, scenario, context: sub.original_text,
     });
-    f.atts[f.i] = { ...f.att, suggest: { scenario, ...result } };
-    updateSubmission(sub.id, { attachments: f.atts, ai_cost_usd: (sub.ai_cost_usd || 0) + cost });
+    // AI odpowiada kilkanaście sekund – w tym czasie zdjęcie mogło zostać zakryte i zapisane.
+    // Dlatego czytamy ŚWIEŻY stan i dopisujemy tylko podpowiedź, nie ruszając pliku.
+    const fresh = getSubmission(sub.id);
+    const g = fresh && findAttachment(fresh, f.att.orig || f.att.file);
+    if (g) {
+      g.atts[g.i] = { ...g.att, suggest: { scenario, ...result } };
+      updateSubmission(fresh.id, { attachments: g.atts, ai_cost_usd: (fresh.ai_cost_usd || 0) + cost });
+    }
     res.json(result);
   } catch (err) {
     console.error('[Zakrywanie] AI:', err.message);
