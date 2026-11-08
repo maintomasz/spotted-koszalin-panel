@@ -343,6 +343,8 @@ async function renderSettings() {
       <div class="stat">AI: <b>${status.ai ? esc(status.model) + ' ✅' : 'brak klucza Anthropic (tryb demo – prosta ocena słownikowa)'}</b></div>
       <div class="stat">Koszt AI w ostatnich 30 dniach: <b>${(status.cost30d || 0).toFixed(2)} $</b> za ${status.count30d} zgłoszeń
         ${status.count30d ? `(średnio ${((status.cost30d || 0) / status.count30d * 100).toFixed(2)} centa)` : ''}</div>
+      <div class="actions"><button class="btn" id="fbcheck">Sprawdź połączenie z Facebookiem</button></div>
+      <div id="fbresult"></div>
     </div>
     <div class="card">
       <h2>Publikowanie</h2>
@@ -373,6 +375,21 @@ async function renderSettings() {
         <button class="btn" id="seed">Dodaj 8 przykładowych wiadomości</button>
       </div>
     </div>`;
+  $('#fbcheck').onclick = (e) => act1(e.target, async () => {
+    const d = await api('/api/fb-check');
+    const ok = (b) => (b ? '✅' : '❌');
+    const rows = [];
+    if (d.error) rows.push(`❌ ${esc(d.error)}`);
+    if (d.tokenOwner) rows.push(`${ok(d.tokenMatchesPage)} Token należy do: <b>${esc(d.tokenOwner.name)}</b> (${esc(d.tokenOwner.id)})${d.tokenMatchesPage ? '' : ` – a FB_PAGE_ID to ${esc(d.pageIdConfigured)}!`}`);
+    if (d.tokenOwnerError) rows.push(`❌ Token: ${esc(d.tokenOwnerError)}`);
+    if (d.app) rows.push(`Aplikacja: <b>${esc(d.app.name)}</b> (${esc(d.app.id)})`);
+    if (d.tokenType) rows.push(`Typ tokenu: <b>${esc(d.tokenType)}</b> · ważny: ${ok(d.valid)} · wygasa: ${esc(d.expires)}`);
+    if (d.scopes) rows.push(`Uprawnienia: ${d.scopes.map(esc).join(', ') || '(brak)'}`);
+    if (d.missingScopes) rows.push(d.missingScopes.length ? `❌ <b>Brakuje:</b> ${d.missingScopes.map(esc).join(', ')}` : '✅ Wszystkie potrzebne uprawnienia są');
+    if (d.debugError || d.appError) rows.push(`⚠️ ${esc(d.debugError || d.appError)}`);
+    rows.push(`App Secret: ${ok(d.appSecretConfigured)} · Verify token: ${ok(d.verifyTokenConfigured)}`);
+    $('#fbresult').innerHTML = `<div class="sub-panel stat">${rows.map((r) => `<div>${r}</div>`).join('')}</div>`;
+  });
   $('#save').onclick = (e) => act1(e.target, async () => {
     settingsCache = await api('/api/settings', { method: 'PUT', body: {
       interval_minutes: $('#interval').value, quiet_from: $('#qfrom').value, quiet_to: $('#qto').value,

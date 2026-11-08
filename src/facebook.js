@@ -34,6 +34,35 @@ async function graph(method, endpoint, { params = {}, body } = {}) {
   return json;
 }
 
+// Diagnostyka: jakie uprawnienia ma token strony i czego brakuje do publikowania/odpisywania.
+export const REQUIRED_SCOPES = ['pages_messaging', 'pages_manage_posts', 'pages_read_engagement', 'pages_show_list'];
+export async function diagnose() {
+  const out = { pageIdConfigured: PAGE_ID() || null, appSecretConfigured: !!process.env.FB_APP_SECRET, verifyTokenConfigured: !!process.env.FB_VERIFY_TOKEN };
+  if (!TOKEN()) return { ...out, error: 'Brak FB_PAGE_ACCESS_TOKEN' };
+  try {
+    out.tokenOwner = await graph('GET', 'me', { params: { fields: 'id,name' } });
+  } catch (err) { out.tokenOwnerError = err.message; }
+  try {
+    const app = await graph('GET', 'app', { params: { fields: 'id,name' } });
+    out.app = app;
+    if (process.env.FB_APP_SECRET) {
+      const url = new URL(`${GRAPH()}/debug_token`);
+      url.searchParams.set('input_token', TOKEN());
+      url.searchParams.set('access_token', `${app.id}|${process.env.FB_APP_SECRET}`);
+      const j = await (await fetch(url)).json();
+      const d = j.data || {};
+      out.tokenType = d.type;
+      out.valid = d.is_valid;
+      out.expires = d.expires_at ? (d.expires_at === 0 ? 'nigdy' : new Date(d.expires_at * 1000).toISOString()) : 'nigdy';
+      out.scopes = d.scopes || [];
+      out.missingScopes = REQUIRED_SCOPES.filter((s) => !(d.scopes || []).includes(s));
+      if (j.error) out.debugError = j.error.message;
+    }
+  } catch (err) { out.appError = err.message; }
+  out.tokenMatchesPage = out.tokenOwner ? String(out.tokenOwner.id) === String(PAGE_ID()) : null;
+  return out;
+}
+
 export async function getUserName(psid) {
   try {
     const u = await graph('GET', psid, { params: { fields: 'first_name,last_name,name' } });

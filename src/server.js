@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { db, DATA_DIR, MEDIA_DIR, getSubmission, updateSubmission, parseRow } from './db.js';
 import { getSettings, saveSettings } from './settings.js';
 import { aiEnabled, AI_MODEL } from './ai.js';
-import { fbEnabled, verifySignature, sendMessage, saveMedia } from './facebook.js';
+import { fbEnabled, verifySignature, sendMessage, saveMedia, diagnose } from './facebook.js';
 import { handleWebhook, addToInbox } from './inbox.js';
 import { nextSlot, reflowQueue, startWorkers } from './scheduler.js';
 import { seedDemo } from './demo-seed.js';
@@ -233,6 +233,10 @@ app.post('/api/test-message', (req, res) => {
   if (!text && !attachments.length) return res.status(400).json({ error: 'Wpisz tekst lub dodaj zdjęcie.' });
   const id = addToInbox({ psid: null, text, attachments, hasVideo: false, ts: Date.now(), source: 'test', senderName: 'Test z panelu' });
   res.json({ ok: true, id });
+});
+
+app.get('/api/fb-check', async (_req, res) => {
+  try { res.json(await diagnose()); } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.post('/api/demo-seed', (_req, res) => res.json({ ok: true, added: seedDemo() }));
