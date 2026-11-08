@@ -26,12 +26,25 @@ const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '
 const fmt = (ts) => ts ? new Date(ts).toLocaleString('pl-PL', { timeZone: 'Europe/Warsaw', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '–';
 const fmtTime = (ts) => new Date(ts).toLocaleTimeString('pl-PL', { timeZone: 'Europe/Warsaw', hour: '2-digit', minute: '2-digit' });
 
-function toast(msg) {
-  const t = $('#toast');
-  t.textContent = msg;
-  t.classList.add('show');
+function toast(msg, opts = {}) {
+  const t = $("#toast");
+  t.innerHTML = "";
+  const span = document.createElement("span");
+  span.textContent = msg;
+  t.appendChild(span);
+  if (opts.undoId) {
+    const b = document.createElement("button");
+    b.textContent = "Cofnij";
+    b.onclick = async () => {
+      t.classList.remove("show");
+      try { await api(`/api/submissions/${opts.undoId}/restore`, { body: {} }); toast("↩︎ Cofnięto"); tick(); } catch (err) { toast(err.message); }
+    };
+    t.appendChild(b);
+  }
+  t.classList.toggle("has-action", !!opts.undoId);
+  t.classList.add("show");
   clearTimeout(toast.t);
-  toast.t = setTimeout(() => t.classList.remove('show'), 3000);
+  toast.t = setTimeout(() => t.classList.remove("show"), opts.undoId ? 6000 : 3000);
 }
 
 async function api(url, opts = {}) {
@@ -120,96 +133,106 @@ function renderInbox(items) {
 function windowLeft(s) {
   if (s.source !== 'facebook') return '';
   const left = s.last_user_message_at + 24 * 3600 * 1000 - Date.now();
-  if (left <= 0) return '<span class="timer late">⏱ minęło 24 h – nie da się już odpisać</span>';
+  if (left <= 0) return '<span class="timer late" title="Minęło 24 h – nie da się już odpisać na Messengerze">⏱ po 24h</span>';
   const h = Math.floor(left / 3600000), m = Math.floor((left % 3600000) / 60000);
-  return `<span class="timer${h < 3 ? ' late' : ''}">⏱ na odpowiedź: ${h} h ${m} min</span>`;
+  return `<span class="timer${h < 3 ? ' late' : ''}" title="Pozostały czas na odpowiedź na Messengerze">⏱ ${h}h${h < 3 ? ` ${m}m` : ''}</span>`;
 }
+
+const fmtShort = (ts) => {
+  const d = new Date(ts);
+  const sameDay = d.toDateString() === new Date().toDateString();
+  return sameDay ? fmtTime(ts) : fmt(ts);
+};
 
 function fillCard(c, s) {
   const el = c.el;
   const ai = s.ai_result;
   const images = (s.attachments || []).filter((a) => a.type === 'image' && a.file);
-  const otherAtt = (s.attachments || []).filter((a) => a.type !== 'image');
+  const otherAtt = (s.attachments || []).filter((a) => a.type !== 'image' && a.type !== 'video');
   const aiPending = s.ai_status === 'pending' || s.ai_status === 'running';
   const verdict = aiPending ? 'pending' : s.ai_status === 'error' ? 'error' : ai?.verdict || 'manual_check';
-  const verdictLabel = aiPending ? '<span class="spinner"></span> AI ocenia…' : s.ai_status === 'error' ? '⚠️ Błąd oceny AI' : VERDICT[verdict];
+  const verdictLabel = aiPending ? '<span class="spinner"></span> AI ocenia…' : s.ai_status === 'error' ? '⚠️ Błąd AI' : VERDICT[verdict];
   const suggested = ai && ai.suggested_text ? ai.suggested_text : s.original_text;
+  const changed = !!(ai?.suggested_text && ai.suggested_text.trim() !== (s.original_text || '').trim());
   const notes = new Map((ai?.image_notes || []).map((n) => [n.image_number, n]));
+  const hideNotes = [...notes.values()].filter((n) => n.needs_anonymization && n.what_to_hide);
+  const issues = !aiPending && ai?.issues ? ai.issues : [];
+  const who = s.sender_name || (s.source === 'facebook' ? 'Użytkownik FB' : s.source);
 
   el.innerHTML = `
-    <div class="meta">
-      <b>#${s.id}</b><span>${esc(s.sender_name || (s.source === 'facebook' ? 'Użytkownik FB' : s.source))}</span>
-      <span>${fmt(s.created_at)}</span>${windowLeft(s)}
-    </div>
-    <div class="ai">
+    <div class="top">
       <span class="badge v-${verdict}">${verdictLabel}</span>
-      ${ai?.category ? `<span class="stat"> · ${esc(CATEGORY[ai.category] || ai.category)}</span>` : ''}
-      ${ai?.summary && !aiPending ? `<div class="summary">${esc(ai.summary)}</div>` : ''}
-      ${s.ai_status === 'error' ? `<div class="error-text">${esc(s.ai_error)}</div>` : ''}
-      ${ai?.commercial_reason && !aiPending ? `<div class="stat">💰 ${esc(ai.commercial_reason)}</div>` : ''}
-      ${ai?.issues?.length && !aiPending ? `<ul class="issues">${ai.issues.map((i) =>
-        `<li class="sev-${esc(i.severity)}"><b>${esc(ISSUE[i.type] || i.type)}</b> – ${esc(i.description)}</li>`).join('')}</ul>` : ''}
+      <span class="meta-r">${esc(who)} · ${fmtShort(s.created_at)} ${windowLeft(s)}</span>
     </div>
-    ${s.has_video ? '<div class="notice">🎬 Wiadomość zawiera wideo – obejrzyj je w skrzynce na Facebooku. Panel nie publikuje filmów: wrzuć je ręcznie i kliknij „Obsłużone ręcznie”.</div>' : ''}
-    ${otherAtt.filter((a) => a.type !== 'video').length ? `<div class="notice info">Inne załączniki: ${otherAtt.filter((a) => a.type !== 'video').map((a) => esc(a.type)).join(', ')} – sprawdź w skrzynce FB.</div>` : ''}
-    ${images.length ? `<div class="images">${images.map((img, i) => {
+    ${ai?.summary && !aiPending ? `<div class="summary">${ai.category ? `<span class="cat">${esc(CATEGORY[ai.category] || ai.category)}</span> ` : ''}${esc(ai.summary.replace(/^\[DEMO – bez AI\]\s*/, ''))}</div>` : ''}
+    ${s.ai_status === 'error' ? `<div class="error-text">${esc(s.ai_error)}</div>` : ''}
+    ${issues.length ? `<div class="chips">${issues.map((i) =>
+      `<span class="chip sev-${esc(i.severity)}" title="${esc(i.description)}">${esc(ISSUE[i.type] || i.type)}</span>`).join('')}</div>` : ''}
+    ${s.has_video ? '<div class="notice">🎬 Jest wideo – obejrzyj w skrzynce FB, wrzuć ręcznie i daj ⋯ → „Obsłużone ręcznie”.</div>' : ''}
+    ${otherAtt.length ? `<div class="notice info">Inne załączniki (${otherAtt.map((a) => esc(a.type)).join(', ')}) – sprawdź w skrzynce FB.</div>` : ''}
+    ${images.length ? `<div class="thumbs-row">${images.map((img, i) => {
       const n = notes.get(i + 1);
       const on = !n || n.ok_to_publish !== false;
-      return `<div class="img${on ? '' : ' off'}">
-        <img src="/media/${esc(img.file)}" alt="zdjęcie ${i + 1}" loading="lazy" data-full="/media/${esc(img.file)}">
-        <label><input type="checkbox" data-img="${esc(img.file)}" ${on ? 'checked' : ''}> Zdjęcie ${i + 1} w poście</label>
-        ${n?.needs_anonymization || n?.what_to_hide ? `<div class="note">⚠️ Zakryj: ${esc(n.what_to_hide || 'sprawdź')}</div>` : ''}
+      return `<div class="thumb${on ? '' : ' off'}" data-img="${esc(img.file)}" data-on="${on ? 1 : 0}" title="Dotknij, aby dodać/usunąć z posta">
+        <img src="/media/${esc(img.file)}" alt="zdjęcie ${i + 1}" loading="lazy">
+        <span class="tick">${on ? '✓' : '✕'}</span><span class="num">${i + 1}</span>
+        ${n?.needs_anonymization ? '<span class="warn">⚠️</span>' : ''}
+        <button class="zoom" data-act="zoom" data-src="/media/${esc(img.file)}" aria-label="Powiększ">⤢</button>
       </div>`;
     }).join('')}</div>
-      ${[...notes.values()].some((n) => n.needs_anonymization) ? '<div class="notice">Na razie zakrywanie robisz ręcznie (np. w Zdjęciach na Macu) – narzędzie do zamazywania dodamy w kolejnym etapie. Możesz też odznaczyć zdjęcie, żeby nie weszło do posta.</div>' : ''}` : ''}
-    <details ${ai?.suggested_text && ai.suggested_text !== s.original_text ? '' : 'open'}>
-      <summary>Oryginalna wiadomość</summary>
-      <div class="original">${esc(s.original_text || '(bez tekstu)')}</div>
-    </details>
-    <div class="label"><span>Treść posta${ai?.suggested_text && ai.suggested_text !== s.original_text ? ' (propozycja AI – możesz edytować)' : ''}</span>
-      <span><a data-act="use-original">wstaw oryginał</a>${ai?.suggested_text ? ' · <a data-act="use-ai">wstaw propozycję AI</a>' : ''}</span></div>
-    <textarea>${esc(suggested)}</textarea>
-    <div class="actions">
-      <button class="btn primary" data-act="approve">✅ Zatwierdź do kolejki</button>
-      <button class="btn money" data-act="commercial">💰 Komercyjne</button>
-      <button class="btn danger" data-act="reject-quick">⛔ Odrzuć</button>
-      <button class="btn danger" data-act="reject">⛔ Odrzuć + dlaczego</button>
-      <button class="btn" data-act="more">⋯</button>
+    ${hideNotes.length ? `<div class="img-notes">⚠️ Zakryj: ${groupNotes(hideNotes)}</div>` : ''}` : ''}
+    <div class="post" data-act="edit" title="Dotknij, aby edytować">${suggested ? esc(suggested) : '<i>(bez tekstu)</i>'}</div>
+    <textarea class="post-edit" hidden>${esc(suggested)}</textarea>
+    ${changed ? `<details class="orig"><summary>Oryginał (AI poprawiło tekst)</summary><div class="original">${esc(s.original_text || '(bez tekstu)')}</div><a data-act="use-original">↩︎ wstaw oryginał</a></details>` : ''}
+    <div class="decide">
+      <button class="btn primary grow" data-act="approve">✅ Zatwierdź</button>
+      <button class="btn icon danger" data-act="reject-quick" title="Odrzuć (z wiadomością z szablonu)">⛔</button>
+      <button class="btn icon money" data-act="commercial" title="Komercyjne – oferta reklamy">💰</button>
+      <button class="btn icon" data-act="more" title="Więcej opcji">⋯</button>
     </div>
     <div class="sub-slot"></div>`;
 
-  const ta = $('textarea', el);
-  ta.addEventListener('input', () => { c.dirty = true; });
-  el.querySelectorAll('input[data-img]').forEach((cb) => cb.addEventListener('change', () => {
+  const ta = $('.post-edit', el);
+  const view = $('.post', el);
+  const autosize = () => { ta.style.height = 'auto'; ta.style.height = ta.scrollHeight + 2 + 'px'; };
+  const startEdit = () => {
+    view.hidden = true; ta.hidden = false; autosize(); ta.focus();
+    ta.setSelectionRange(ta.value.length, ta.value.length);
+  };
+  ta.addEventListener('input', () => { c.dirty = true; autosize(); });
+  el.querySelectorAll('.thumb').forEach((t) => t.addEventListener('click', (e) => {
+    if (e.target.closest('.zoom')) return;
+    const on = t.dataset.on !== '1';
+    t.dataset.on = on ? '1' : '0';
+    t.classList.toggle('off', !on);
+    $('.tick', t).textContent = on ? '✓' : '✕';
     c.dirty = true;
-    cb.closest('.img').classList.toggle('off', !cb.checked);
   }));
-  el.querySelectorAll('img[data-full]').forEach((img) => img.addEventListener('click', () => window.open(img.dataset.full, '_blank')));
+  const selectedImages = () => [...el.querySelectorAll('.thumb[data-on="1"]')].map((x) => x.dataset.img);
   const slot = $('.sub-slot', el);
+
+  const decide = async (btn, path, body, msg) => act1(btn, async () => {
+    const r = await api(`/api/submissions/${s.id}/${path}`, { body });
+    removeCard(s.id);
+    toast(typeof msg === 'function' ? msg(r) : msg, { undoId: s.id });
+  });
 
   el.onclick = async (e) => {
     const a = e.target.closest('[data-act]');
     if (!a) return;
     const act = a.dataset.act;
-    if (act === 'use-original') { ta.value = s.original_text; c.dirty = true; return; }
-    if (act === 'use-ai') { ta.value = ai.suggested_text; c.dirty = true; return; }
+    if (act === 'edit') return startEdit();
+    if (act === 'zoom') return lightbox(a.dataset.src);
+    if (act === 'use-original') { ta.value = s.original_text; view.textContent = s.original_text; c.dirty = true; return; }
     if (act === 'approve') {
-      const imgs = [...el.querySelectorAll('input[data-img]:checked')].map((x) => x.dataset.img);
-      await act1(a, async () => {
-        const r = await api(`/api/submissions/${s.id}/approve`, { body: { text: ta.value, images: imgs } });
-        toast(`Zaplanowano na ${fmtTime(r.scheduled_at)}`);
-        removeCard(s.id);
-      });
-      return;
+      return decide(a, 'approve', { text: ta.value, images: selectedImages() }, (r) => `✅ Zaplanowano na ${fmtTime(r.scheduled_at)}`);
+    }
+    if (act === 'approve-now') {
+      return decide(a, 'approve', { text: ta.value, images: selectedImages(), now: true }, '🚀 Publikuję w ciągu kilkunastu sekund');
     }
     if (act === 'reject-quick') {
       const st = settingsCache || (settingsCache = await api('/api/settings'));
-      await act1(a, async () => {
-        const r = await api(`/api/submissions/${s.id}/reject`, { body: { message: st.template_reject } });
-        toast(`Odrzucono${r.reply ? ' · wiadomość: ' + r.reply : ''}`);
-        removeCard(s.id);
-      });
-      return;
+      return decide(a, 'reject', { message: st.template_reject }, (r) => `⛔ Odrzucono${r.reply === 'wysłano' ? ' · wysłano wiadomość' : ''}`);
     }
     if (act === 'commercial' || act === 'reject') {
       const st = settingsCache || (settingsCache = await api('/api/settings'));
@@ -217,52 +240,58 @@ function fillCard(c, s) {
       const canReply = s.source === 'facebook';
       const msg = isCom ? st.template_commercial : `${st.template_reject}\n\nPowód: `;
       slot.innerHTML = `<div class="sub-panel">
-        <div class="label"><span>${isCom ? 'Wiadomość do autora (oferta reklamy)' : 'Wiadomość do autora – dopisz powód'}</span></div>
-        <label class="row"><input type="checkbox" class="send" ${canReply ? 'checked' : 'disabled'}>
-          Wyślij wiadomość na Messengerze${canReply ? '' : ' (niedostępne – to nie jest wiadomość z FB)'}</label>
+        <label class="row small"><input type="checkbox" class="send" ${canReply ? 'checked' : 'disabled'}>
+          ${isCom ? 'Wyślij ofertę reklamy na Messengerze' : 'Wyślij wiadomość z powodem'}${canReply ? '' : ' (to nie jest wiadomość z FB)'}</label>
         <textarea class="msg">${esc(msg)}</textarea>
         <div class="row">
-          <button class="btn ${isCom ? 'money' : 'danger'}" data-act="${isCom ? 'commercial-go' : 'reject-go'}">${isCom ? 'Oznacz jako komercyjne' : 'Odrzuć'}</button>
+          <button class="btn ${isCom ? 'money' : 'danger'} grow" data-act="${isCom ? 'commercial-go' : 'reject-go'}">${isCom ? '💰 Oznacz jako komercyjne' : '⛔ Odrzuć'}</button>
           <button class="btn" data-act="cancel">Anuluj</button>
         </div></div>`;
+      const m = $('.msg', slot);
+      m.focus();
+      m.setSelectionRange(m.value.length, m.value.length);
       return;
     }
     if (act === 'commercial-go' || act === 'reject-go') {
-      const send = $('.send', slot).checked;
-      const message = send ? $('.msg', slot).value : '';
-      await act1(a, async () => {
-        const r = await api(`/api/submissions/${s.id}/${act === 'commercial-go' ? 'commercial' : 'reject'}`, { body: { message } });
-        toast(act === 'commercial-go' ? `Oznaczono jako komercyjne${r.reply ? ' · wiadomość: ' + r.reply : ''}` : `Odrzucono${r.reply ? ' · wiadomość: ' + r.reply : ''}`);
-        removeCard(s.id);
-      });
-      return;
+      const message = $('.send', slot).checked ? $('.msg', slot).value : '';
+      const isCom = act === 'commercial-go';
+      return decide(a, isCom ? 'commercial' : 'reject', { message },
+        (r) => `${isCom ? '💰 Komercyjne' : '⛔ Odrzucono'}${r.reply === 'wysłano' ? ' · wysłano wiadomość' : ''}`);
     }
     if (act === 'cancel') { slot.innerHTML = ''; return; }
     if (act === 'more') {
-      slot.innerHTML = `<div class="sub-panel"><div class="row">
-        <button class="btn" data-act="handled">Obsłużone ręcznie</button>
-        <button class="btn" data-act="reanalyze">🔄 Oceń ponownie AI</button>
-        <button class="btn" data-act="approve-now">🚀 Opublikuj od razu (pomiń kolejkę)</button>
-        <button class="btn" data-act="cancel">Zamknij</button></div></div>`;
+      if (slot.innerHTML) { slot.innerHTML = ''; return; }
+      slot.innerHTML = `<div class="sub-panel menu">
+        <button class="btn" data-act="reject">⛔ Odrzuć z powodem</button>
+        <button class="btn" data-act="approve-now">🚀 Opublikuj od razu (bez kolejki)</button>
+        <button class="btn" data-act="edit">✏️ Edytuj tekst</button>
+        <button class="btn" data-act="handled">✋ Obsłużone ręcznie</button>
+        <button class="btn" data-act="reanalyze">🔄 Oceń ponownie AI</button></div>`;
       return;
     }
-    if (act === 'handled') {
-      await act1(a, async () => { await api(`/api/submissions/${s.id}/handled`, { body: {} }); toast('Oznaczono jako obsłużone'); removeCard(s.id); });
-      return;
-    }
+    if (act === 'handled') return decide(a, 'handled', {}, '✋ Oznaczono jako obsłużone');
     if (act === 'reanalyze') {
-      await act1(a, async () => { await api(`/api/submissions/${s.id}/reanalyze`, { body: {} }); c.dirty = false; toast('AI oceni ponownie'); tick(); });
-      return;
-    }
-    if (act === 'approve-now') {
-      const imgs = [...el.querySelectorAll('input[data-img]:checked')].map((x) => x.dataset.img);
-      await act1(a, async () => {
-        await api(`/api/submissions/${s.id}/approve`, { body: { text: ta.value, images: imgs, now: true } });
-        toast('Publikuję w ciągu kilkunastu sekund');
-        removeCard(s.id);
-      });
+      await act1(a, async () => { await api(`/api/submissions/${s.id}/reanalyze`, { body: {} }); c.dirty = false; toast('🔄 AI oceni ponownie'); tick(); });
     }
   };
+}
+
+// Te same uwagi dla kilku zdjęć pokazujemy raz: „1, 2, 3: tablica rejestracyjna”.
+function groupNotes(list) {
+  const by = new Map();
+  for (const n of list) {
+    const k = n.what_to_hide.replace(/\s*\(demo nie widzi zdjęć\)\.?/, '').trim();
+    by.set(k, [...(by.get(k) || []), n.image_number]);
+  }
+  return [...by].map(([txt, nums]) => `<b>${nums.join(', ')}</b> ${esc(txt)}`).join(' · ');
+}
+
+function lightbox(src) {
+  const box = document.createElement('div');
+  box.className = 'lightbox';
+  box.innerHTML = `<img src="${esc(src)}" alt=""><button class="close" aria-label="Zamknij">✕</button>`;
+  box.addEventListener('click', () => box.remove());
+  document.body.appendChild(box);
 }
 
 async function act1(btn, fn) {
