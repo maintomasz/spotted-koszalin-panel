@@ -83,6 +83,9 @@ const publicPage = (file) => (_req, res) => res.sendFile(path.join(PAGES_DIR, fi
 app.get(['/polityka-prywatnosci', '/privacy'], publicPage('polityka-prywatnosci.html'));
 app.get(['/usuwanie-danych', '/data-deletion'], publicPage('usuwanie-danych.html'));
 app.get('/strony.css', publicPage('strony.css'));
+app.get('/logo.jpg', publicPage('logo.jpg'));
+app.get('/favicon.png', publicPage('favicon.png'));
+app.get(['/apple-touch-icon.png', '/apple-touch-icon-precomposed.png'], publicPage('apple-touch-icon.png'));
 
 // ---------- Logowanie ----------
 app.get('/login', (_req, res) => res.sendFile(path.join(here, '..', 'public', 'login.html')));

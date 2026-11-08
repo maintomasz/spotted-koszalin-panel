@@ -152,3 +152,8 @@ a.btn { border: 1px solid var(--border); background: var(--card); color: var(--t
 a.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
 .decide .btn { white-space: nowrap; }
 .decide .grow { flex: 1 1 0; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+
+/* Logo w nagłówku */
+.logo { display: inline-flex; align-items: center; gap: 9px; }
+.logo-img { width: 30px; height: 30px; border-radius: 7px; object-fit: cover; box-shadow: 0 0 0 1px var(--border); }
+@media (max-width: 600px) { .logo-img { width: 26px; height: 26px; border-radius: 6px; } }
