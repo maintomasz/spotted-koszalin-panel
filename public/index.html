@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="pl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Spotted Koszalin – Moderacja</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header>
+  <div class="bar">
+    <strong class="logo">Spotted Koszalin</strong>
+    <span id="modeInfo" class="mode"></span>
+    <form method="post" action="/logout"><button class="ghost small" type="submit">Wyloguj</button></form>
+  </div>
+  <nav id="tabs">
+    <button data-tab="new" class="active">Do decyzji <span class="count" data-count="new"></span></button>
+    <button data-tab="queued">Kolejka <span class="count" data-count="queued"></span></button>
+    <button data-tab="published">Opublikowane</button>
+    <button data-tab="commercial">Komercyjne <span class="count muted" data-count="commercial"></span></button>
+    <button data-tab="rejected">Odrzucone</button>
+    <button data-tab="failed" hidden>Błędy <span class="count" data-count="failed"></span></button>
+    <button data-tab="settings">Ustawienia</button>
+  </nav>
+</header>
+<main id="main"></main>
+<div id="toast"></div>
+<script src="/app.js"></script>
+</body>
+</html>
