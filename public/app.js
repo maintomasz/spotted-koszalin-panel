@@ -920,6 +920,10 @@ async function renderSettings() {
     if (d.missingScopes) rows.push(d.missingScopes.length ? `❌ <b>Brakuje:</b> ${d.missingScopes.map(esc).join(', ')}` : '✅ Wszystkie potrzebne uprawnienia są');
     if (d.debugError || d.appError) rows.push(`⚠️ ${esc(d.debugError || d.appError)}`);
     rows.push(`App Secret: ${ok(d.appSecretConfigured)} · Verify token: ${ok(d.verifyTokenConfigured)}`);
+    if (d.testCalls?.length) {
+      rows.push('<b>Testowe wywołania API (do App Review):</b>');
+      for (const t of d.testCalls) rows.push(`${ok(t.ok)} ${esc(t.label)}${t.ok ? '' : ` – ${esc(t.error)}`}`);
+    }
     $('#fbresult').innerHTML = `<div class="sub-panel stat">${rows.map((r) => `<div>${r}</div>`).join('')}</div>`;
   });
   $('#save').onclick = (e) => act1(e.target, async () => {

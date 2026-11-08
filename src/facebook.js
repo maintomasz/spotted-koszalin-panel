@@ -60,6 +60,21 @@ export async function diagnose() {
     }
   } catch (err) { out.appError = err.message; }
   out.tokenMatchesPage = out.tokenOwner ? String(out.tokenOwner.id) === String(PAGE_ID()) : null;
+  // Testowe wywołania API wymagane przez Meta w App Review (liczą się dla uprawnień w zakładce „Testing”).
+  out.testCalls = [];
+  const test = async (label, endpoint, params) => {
+    try {
+      await graph('GET', endpoint, { params });
+      out.testCalls.push({ label, ok: true });
+    } catch (err) {
+      out.testCalls.push({ label, ok: false, error: err.message });
+    }
+  };
+  if (PAGE_ID()) {
+    await test('pages_read_engagement (posty strony)', `${PAGE_ID()}/feed`, { limit: '1', fields: 'id,created_time' });
+    await test('pages_read_engagement (dane strony)', PAGE_ID(), { fields: 'id,name,fan_count' });
+    await test('pages_manage_metadata (subskrypcja webhooka)', `${PAGE_ID()}/subscribed_apps`, {});
+  }
   return out;
 }
 
