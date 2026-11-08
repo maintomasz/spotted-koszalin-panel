@@ -392,7 +392,9 @@ async function renderSettings() {
       <h2>Szablony wiadomości</h2>
       <div class="label">Odpowiedź na treść komercyjną</div><textarea id="tcom">${esc(s.template_commercial)}</textarea>
       <div class="label">Odpowiedź przy odrzuceniu (wysyłana od razu po kliknięciu „Odrzuć”; przy „Odrzuć + dlaczego” dopisujesz powód)</div><textarea id="trej">${esc(s.template_reject)}</textarea>
-      <div class="label">Podziękowanie po publikacji (wysyłane automatycznie, gdy post pojawi się na stronie; zostaw puste, żeby nie wysyłać)</div><textarea id="tpub">${esc(s.template_published)}</textarea>
+      <div class="label"><span>Podziękowanie po publikacji – wysyłane, gdy post wyjdzie z kolejki na stronę. Znacznik <b>{link}</b> zamieni się w link do posta. Puste = nie wysyłaj.</span></div><textarea id="tpub">${esc(s.template_published)}</textarea>
+      <div class="label">Podgląd – tak zobaczy to autor na Messengerze:</div>
+      <div class="msgr"><div class="msgr-head">Spotted Koszalin</div><div class="bubble" id="tpubPreview"></div></div>
       <div class="actions"><button class="btn primary" id="save">Zapisz ustawienia</button></div>
     </div>
     <div class="card">
@@ -405,6 +407,16 @@ async function renderSettings() {
         <button class="btn" id="seed">Dodaj 8 przykładowych wiadomości</button>
       </div>
     </div>`;
+  const previewPub = () => {
+    const link = 'https://www.facebook.com/spottedkoszalin/posts/pfbid02Xk…';
+    let t = $('#tpub').value.trim();
+    if (t && !t.includes('{link}')) { const [first, ...rest] = t.split('\n'); t = [first, `Zobacz: {link}`, ...rest].join('\n'); }
+    $('#tpubPreview').innerHTML = t
+      ? esc(t).replaceAll('{link}', `<a>${link}</a>`).replace(/(https:\/\/buycoffee\.to\/\S+)/g, '<a>$1</a>')
+      : '<i>(wyłączone – nic nie zostanie wysłane)</i>';
+  };
+  $('#tpub').addEventListener('input', previewPub);
+  previewPub();
   $('#fbcheck').onclick = (e) => act1(e.target, async () => {
     const d = await api('/api/fb-check');
     const ok = (b) => (b ? '✅' : '❌');

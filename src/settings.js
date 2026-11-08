@@ -15,10 +15,21 @@ export const DEFAULT_SETTINGS = {
   template_commercial: `Cześć! Dzięki za wiadomość 🙂 Twoja treść ma charakter komercyjny (reklama / sprzedaż / promocja), a takich wpisów nie publikujemy bezpłatnie. Chętnie przedstawimy ofertę płatnej publikacji na Spotted Koszalin – daj znać, jeśli chcesz poznać szczegóły!`,
   template_reject: `Cześć! Dziękujemy za wiadomość, niestety nie możemy jej opublikować, ponieważ nie spełnia zasad naszej strony.`,
   template_published: `Twój post został opublikowany! 🎉
+Zobacz: {link}
+
 Pozdrawiam, Spotted Koszalin
 
 Jeśli podoba Ci się nasza praca, możesz postawić nam kawę: https://buycoffee.to/spottedkoszalin ☕ Dzięki!`,
 };
+
+// Wstawia link do posta w miejsce {link}; gdy znacznika brak – dodaje link pod pierwszą linijką.
+export function fillPublishedTemplate(template, link) {
+  const t = String(template || '').trim();
+  if (!t) return '';
+  if (t.includes('{link}')) return t.replaceAll('{link}', link);
+  const [first, ...rest] = t.split('\n');
+  return [first, `Zobacz: ${link}`, ...rest].join('\n');
+}
 
 export function getSettings() {
   const rows = db.prepare('SELECT key, value FROM settings').all();

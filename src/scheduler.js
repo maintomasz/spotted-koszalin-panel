@@ -1,8 +1,8 @@
 // Kolejka: ocena AI w tle + publikowanie zatwierdzonych postów w odstępach czasu.
 import { db, getSubmission, updateSubmission, parseRow, deleteSubmissionsWhere } from './db.js';
-import { getSettings } from './settings.js';
+import { getSettings, fillPublishedTemplate } from './settings.js';
 import { analyzeSubmission } from './ai.js';
-import { fbEnabled, publishPost, sendMessage } from './facebook.js';
+import { fbEnabled, publishPost, sendMessage, getPermalink } from './facebook.js';
 
 const TZ = 'Europe/Warsaw';
 const MIN = 60 * 1000;
@@ -94,14 +94,15 @@ async function runAi() {
 }
 
 // Podziękowanie dla autora po publikacji (szablon „template_published”; pusty = nie wysyłamy).
-async function notifyPublished(sub) {
-  const text = (getSettings().template_published || '').trim();
-  if (!text) return null;
+async function notifyPublished(sub, postId) {
+  const template = (getSettings().template_published || '').trim();
+  if (!template) return null;
   if (sub.source !== 'facebook' || !sub.sender_id) return null;
   if (!fbEnabled()) return 'DEMO – nie wysłano podziękowania';
   if (Date.now() - sub.last_user_message_at > 24 * 3600 * 1000) return 'nie wysłano podziękowania – minęło 24 h';
   try {
-    await sendMessage(sub.sender_id, text);
+    const link = await getPermalink(postId);
+    await sendMessage(sub.sender_id, fillPublishedTemplate(template, link));
     return 'wysłano podziękowanie';
   } catch (err) {
     console.error(`[Publikacja] #${sub.id} podziękowanie nie wysłane:`, err.message);
@@ -125,7 +126,7 @@ async function runPublisher() {
       else postId = 'DEMO-' + sub.id;
       updateSubmission(sub.id, { status: 'published', published_at: Date.now(), fb_post_id: postId, publish_error: null });
       console.log(`[Publikacja] #${sub.id} opublikowano (${postId})`);
-      updateSubmission(sub.id, { reply_sent: await notifyPublished(sub) });
+      updateSubmission(sub.id, { reply_sent: await notifyPublished(sub, postId) });
     } catch (err) {
       console.error(`[Publikacja] #${sub.id} błąd:`, err.message);
       updateSubmission(sub.id, { status: 'failed', publish_error: String(err.message).slice(0, 500) });

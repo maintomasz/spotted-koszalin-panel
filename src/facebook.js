@@ -108,6 +108,17 @@ async function uploadPhoto(file, mime, { published, caption } = {}) {
   return graph('POST', `${PAGE_ID()}/photos`, { body: form });
 }
 
+// Stały link do opublikowanego posta (do wiadomości z podziękowaniem).
+export async function getPermalink(postId) {
+  try {
+    const r = await graph('GET', postId, { params: { fields: 'permalink_url' } });
+    if (r.permalink_url) return r.permalink_url;
+  } catch (err) {
+    console.warn('[Publikacja] brak permalink_url:', err.message);
+  }
+  return `https://www.facebook.com/${postId}`;
+}
+
 // Publikuje post na stronie: sam tekst, jedno zdjęcie z opisem albo kilka zdjęć w jednym poście.
 export async function publishPost({ text, images }) {
   if (!images || images.length === 0) {
