@@ -86,5 +86,6 @@ export function deleteEverythingAbout(senderId) {
   const n = deleteSubmissionsWhere('sender_id = ?', senderId);
   deleteMessagesWhere('sender_id = ?', senderId);
   db.prepare('DELETE FROM threads WHERE sender_id = ?').run(senderId);
+  db.prepare('DELETE FROM people WHERE sender_id = ?').run(senderId);
   return n;
 }

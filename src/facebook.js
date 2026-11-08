@@ -123,6 +123,18 @@ async function uploadPhoto(file, mime, { published, caption } = {}) {
   return graph('POST', `${PAGE_ID()}/photos`, { body: form });
 }
 
+// Rozmowa z daną osobą w skrzynce strony: link do niej na Facebooku + imię uczestnika.
+export async function getConversationInfo(psid) {
+  const r = await graph('GET', `${PAGE_ID()}/conversations`, {
+    params: { platform: 'messenger', user_id: psid, fields: 'link,updated_time,participants' },
+  });
+  const conv = (r.data || [])[0];
+  if (!conv) return { link: null, name: null };
+  const link = conv.link ? (conv.link.startsWith('http') ? conv.link : `https://www.facebook.com${conv.link}`) : null;
+  const name = conv.participants?.data?.find((p) => String(p.id) === String(psid))?.name || null;
+  return { link, name };
+}
+
 // Poprawia treść już opublikowanego posta na stronie.
 export async function editPost(postId, text) {
   return graph('POST', postId, { body: new URLSearchParams({ message: text }) });

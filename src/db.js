@@ -72,6 +72,13 @@ db.exec(`
 if (!db.prepare('PRAGMA table_info(submissions)').all().some((c) => c.name === 'flags')) {
   db.exec("ALTER TABLE submissions ADD COLUMN flags TEXT NOT NULL DEFAULT ''");
 }
+// Osoby piszące do strony – imię i link do rozmowy na Facebooku (do zakładki „Skrzynka”).
+db.exec(`CREATE TABLE IF NOT EXISTS people (
+  sender_id TEXT PRIMARY KEY,
+  name TEXT,
+  fb_link TEXT,
+  checked_at INTEGER
+)`);
 // Migracja: szablon odpowiedzi zaproponowany przez AI dla rozmowy.
 if (!db.prepare('PRAGMA table_info(threads)').all().some((c) => c.name === 'preset')) {
   db.exec('ALTER TABLE threads ADD COLUMN preset TEXT');

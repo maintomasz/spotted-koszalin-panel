@@ -12,6 +12,7 @@ import { listOpenThreads, getThread, upsertThread, sendAndLog, logMessage, delet
 import { handleWebhook, addToInbox, createSubmission } from './inbox.js';
 import { nextSlot, reflowQueue, startWorkers } from './scheduler.js';
 import { seedDemo } from './demo-seed.js';
+import { searchMailbox, personDetail, refreshPersonFromFacebook } from './mailbox.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -462,6 +463,17 @@ app.post('/api/submissions/:id/edit-published', async (req, res) => {
     res.json({ ok: true });
   } catch (err) {
     res.status(502).json({ error: 'Facebook nie przyjął poprawki: ' + err.message });
+  }
+});
+
+// ---------- Skrzynka: wszystkie osoby, wyszukiwanie, pełna historia ----------
+app.get('/api/mailbox', (req, res) => res.json(searchMailbox(String(req.query.q || '').slice(0, 100))));
+app.get('/api/mailbox/:psid', (req, res) => res.json(personDetail(String(req.params.psid))));
+app.post('/api/mailbox/:psid/facebook', async (req, res) => {
+  try {
+    res.json(await refreshPersonFromFacebook(String(req.params.psid), !!req.body?.force));
+  } catch (err) {
+    res.status(502).json({ error: err.message });
   }
 });
 

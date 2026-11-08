@@ -216,6 +216,8 @@ function runCleanup() {
   const n = deleteSubmissionsWhere("created_at < ? AND status NOT IN ('queued','publishing')", cutoff);
   deleteMessagesWhere('created_at < ? AND pending = 0', cutoff);
   db.prepare("DELETE FROM threads WHERE state = 'closed' AND updated_at < ?").run(cutoff);
+  // Osoby, po których nie została żadna wiadomość ani zgłoszenie.
+  db.prepare('DELETE FROM people WHERE sender_id NOT IN (SELECT sender_id FROM messages) AND sender_id NOT IN (SELECT sender_id FROM submissions WHERE sender_id IS NOT NULL)').run();
   db.prepare('DELETE FROM processed_mids WHERE at < ?').run(Date.now() - 30 * 24 * 3600 * 1000);
   if (n) console.log(`[Retencja] usunięto ${n} zgłoszeń starszych niż ${RETENTION_DAYS} dni`);
 }

@@ -98,6 +98,7 @@ document.getElementById('tabs').addEventListener('click', (e) => {
   const b = e.target.closest('button[data-tab]');
   if (!b) return;
   tab = b.dataset.tab;
+  if (tab === "mailbox") mailboxPerson = null;
   for (const x of document.querySelectorAll('#tabs button')) x.classList.toggle('active', x === b);
   cards.clear();
   threadCards.clear();
@@ -109,6 +110,7 @@ async function render() {
   try {
     if (tab === 'settings') return renderSettings();
     if (tab === 'conversations') return renderThreads(await api('/api/threads'));
+    if (tab === 'mailbox') return mailboxPerson ? renderPerson(mailboxPerson) : renderMailbox();
     const items = await api(`/api/submissions?status=${tab}`);
     if (isInboxTab()) return renderInbox(items);
     return renderList(items);
@@ -738,6 +740,112 @@ function fillThread(c, t) {
     }
     if (act === 'cancel') slot.innerHTML = '';
   };
+}
+
+// ---------- Skrzynka: wszystkie osoby + wyszukiwarka + pełna historia ----------
+let mailboxQ = '';
+let mailboxPerson = null;
+const pageInboxUrl = (psid) => `https://business.facebook.com/latest/inbox/all/?asset_id=${encodeURIComponent(status.pageId || '')}&mailbox_id=${encodeURIComponent(status.pageId || '')}&selected_item_id=${encodeURIComponent(psid)}&thread_type=FB_MESSAGE`;
+
+// Podświetla znalezioną frazę (bez względu na wielkość liter i polskie znaki).
+const foldStr = (s) => Array.from(String(s || ''), (ch) => {
+  if (ch.length !== 1) return ch;
+  const c = ch.toLowerCase();
+  if (c.length !== 1) return ch;
+  return c === 'ł' ? 'l' : c.normalize('NFD')[0];
+}).join('');
+function highlight(text, q) {
+  const t = String(text || '');
+  const needle = foldStr(q.trim());
+  if (!needle) return esc(t);
+  const f = foldStr(t);
+  let out = '', i = 0, idx;
+  while ((idx = f.indexOf(needle, i)) >= 0) {
+    out += esc(t.slice(i, idx)) + `<mark>${esc(t.slice(idx, idx + needle.length))}</mark>`;
+    i = idx + needle.length;
+  }
+  return out + esc(t.slice(i));
+}
+
+async function renderMailbox() {
+  const focused = document.activeElement?.id === 'mbq';
+  const data = await api(`/api/mailbox?q=${encodeURIComponent(mailboxQ)}`);
+  const listHtml = data.people.length ? data.people.map((p) => `
+    <button class="person" data-psid="${esc(p.sender_id)}">
+      <div class="p-top">
+        <b class="p-name">${p.nameHit ? highlight(p.name, mailboxQ) : esc(p.name || 'Użytkownik FB')}</b>
+        <span class="p-time">${fmtShort(p.last_at)}</span>
+      </div>
+      ${p.matches?.length ? p.matches.map((m) => `<div class="p-snip">${m.where === 'out' ? '↩︎ ' : m.where === 'post' ? '📰 ' : ''}${highlight(m.text, mailboxQ)}</div>`).join('')
+        : `<div class="p-snip muted">${p.last_dir === 'out' ? 'Ty: ' : ''}${esc(String(p.last_text || '').slice(0, 110))}</div>`}
+      <div class="p-meta">${p.count} ${p.count === 1 ? 'wiadomość' : p.count < 5 ? 'wiadomości' : 'wiadomości'}${p.pending ? ` · <span class="tag warn">⏳ ${p.pending} do decyzji</span>` : ''}${p.open ? ' · <span class="tag">💬 otwarta rozmowa</span>' : ''}</div>
+    </button>`).join('')
+    : `<div class="empty">${mailboxQ ? `Nic nie znaleziono dla „${esc(mailboxQ)}”.` : 'Skrzynka jest pusta – pojawią się tu wszystkie osoby, które napiszą do strony.'}</div>`;
+  main.innerHTML = `
+    <div class="mb-search">
+      <input type="search" id="mbq" placeholder="🔍 Szukaj po treści wiadomości lub imieniu i nazwisku…" value="${esc(mailboxQ)}" autocomplete="off">
+      <div class="stat">${mailboxQ ? `Znaleziono osób: <b>${data.total}</b>` : `Wszystkie osoby: <b>${data.total}</b> · od najnowszej aktywności`}</div>
+    </div>
+    <div class="people">${listHtml}</div>`;
+  const inp = $('#mbq');
+  if (focused) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+  let t;
+  inp.addEventListener('input', () => {
+    clearTimeout(t);
+    t = setTimeout(() => { mailboxQ = inp.value; renderMailbox(); }, 300);
+  });
+  main.onclick = (e) => {
+    const b = e.target.closest('.person');
+    if (!b) return;
+    mailboxPerson = b.dataset.psid;
+    window.scrollTo(0, 0);
+    renderPerson(mailboxPerson);
+  };
+}
+
+async function renderPerson(psid) {
+  const d = await api(`/api/mailbox/${encodeURIComponent(psid)}`);
+  const subHtml = d.submissions.length ? d.submissions.map((s) => `
+    <div class="sub-row">
+      <span class="tag">${STATUS_LABEL[s.status] || esc(s.status)}</span>
+      <span class="stat">${fmt(s.created_at)}</span> ${postLink(s)}
+      <div class="sub-text">${highlight(String(s.final_text || s.original_text || '(tylko zdjęcia)').slice(0, 220), mailboxQ)}</div>
+    </div>`).join('') : '<div class="stat">Brak zgłoszeń.</div>';
+  const fbBtn = (link) => link
+    ? `<a class="btn primary" href="${esc(link)}" target="_blank" rel="noopener">👤 Otwórz rozmowę na Facebooku</a>`
+    : `<a class="btn primary" href="${pageInboxUrl(psid)}" target="_blank" rel="noopener">👤 Otwórz w skrzynce Meta</a>`;
+  main.innerHTML = `
+    <button class="ghost small back" data-act="back">← Wróć do skrzynki</button>
+    <div class="card person-card">
+      <div class="top"><h2 style="margin:0">${esc(d.name || 'Użytkownik FB')}</h2>
+        <span class="meta-r">${d.messages.length} wiad. · ${d.submissions.length} zgł.</span></div>
+      <div class="actions" id="fbLinks">${fbBtn(d.fb_link)}</div>
+      <div class="stat" id="fbHint">${d.fb_link ? 'Link prowadzi do rozmowy w skrzynce strony – stamtąd jednym kliknięciem przejdziesz na profil tej osoby.' : '<span class="spinner"></span> Szukam rozmowy na Facebooku…'}</div>
+    </div>
+    <div class="card"><h2>Historia wiadomości</h2>
+      <div class="chat full">${d.messages.map((m) => bubble({ ...m, text: m.text }).replace(/<div class="b-text">([\s\S]*?)<\/div>/, (_, inner) => `<div class="b-text">${mailboxQ ? highlight(m.text, mailboxQ) : inner}</div>`)).join('') || '<div class="stat">Brak wiadomości.</div>'}</div>
+    </div>
+    <div class="card"><h2>Zgłoszenia tej osoby</h2>${subHtml}</div>`;
+  const chat = $('.chat.full', main);
+  const firstMark = $('mark', chat);
+  requestAnimationFrame(() => { if (firstMark) firstMark.scrollIntoView({ block: 'center' }); else chat.scrollTop = chat.scrollHeight; });
+  main.onclick = (e) => {
+    const a = e.target.closest('[data-act]');
+    if (a?.dataset.act === 'back') { mailboxPerson = null; renderMailbox(); return; }
+    if (a?.dataset.act === 'zoom') lightbox(a.dataset.src);
+  };
+  if (!d.fb_link) {
+    try {
+      const p = await api(`/api/mailbox/${encodeURIComponent(psid)}/facebook`, { body: {} });
+      if (mailboxPerson !== psid) return;
+      $('#fbLinks').innerHTML = fbBtn(p?.fb_link);
+      $('#fbHint').innerHTML = p?.fb_link ? 'Link prowadzi do rozmowy w skrzynce strony – stamtąd jednym kliknięciem przejdziesz na profil tej osoby.'
+        : 'Nie udało się pobrać linku do rozmowy – przycisk otworzy skrzynkę Meta Business Suite.';
+      if (p?.name && !d.name) $('.person-card h2').textContent = p.name;
+    } catch {
+      $('#fbHint').textContent = 'Nie udało się połączyć z Facebookiem – przycisk otworzy skrzynkę Meta Business Suite.';
+    }
+  }
 }
 
 // ---------- Pozostałe listy ----------

@@ -9,6 +9,7 @@ import { downloadImage, getUserName } from './facebook.js';
 import { logMessage, getThread, upsertThread, recentDecision, sendAndLog, deleteEverythingAbout } from './threads.js';
 import { reflowQueue } from './scheduler.js';
 import { getSettings } from './settings.js';
+import { refreshPersonFromFacebook } from './mailbox.js';
 
 // Komenda RODO: „usuń moje dane” / „delete my data” – kasuje wszystkie dane nadawcy z panelu.
 const normalize = (s) => s.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/ł/g, 'l')
@@ -71,6 +72,8 @@ async function handleMessagingEvent(ev) {
   }
   if (!text && attachments.length === 0) return;
   routeIncoming({ psid, text, attachments, hasVideo, ts: ev.timestamp || Date.now() });
+  // W tle: imię i link do rozmowy na Facebooku (do zakładki „Skrzynka”).
+  refreshPersonFromFacebook(psid).catch(() => {});
 }
 
 export function routeIncoming({ psid, text, attachments, hasVideo, ts }) {
