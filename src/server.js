@@ -14,6 +14,7 @@ import { nextSlot, reflowQueue, startWorkers } from './scheduler.js';
 import { seedDemo } from './demo-seed.js';
 import { searchMailbox, personDetail, refreshPersonFromFacebook } from './mailbox.js';
 import { logDecision, forgetDecision, getStats } from './stats.js';
+import { siteEnabled, listJobs, jobAction, updateJob, pendingJobsCount, startSitePolling } from './site.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT || 3000);
@@ -134,7 +135,9 @@ app.get('/api/status', (_req, res) => {
       ...Object.fromEntries(Object.keys(LISTS).map((k) => [k,
         db.prepare(`SELECT COUNT(*) AS n FROM submissions WHERE ${LISTS[k].split(' ORDER BY')[0]}`).get().n])),
       conversations: db.prepare("SELECT COUNT(*) AS n FROM threads WHERE state = 'open'").get().n,
+      jobs: pendingJobsCount(),
     },
+    site: siteEnabled(),
   });
 });
 
@@ -486,6 +489,18 @@ app.post('/api/mailbox/:psid/facebook', async (req, res) => {
   }
 });
 
+// ---------- Praca: ogłoszenia z formularza na spottedkoszalin.pl ----------
+const siteErr = (res, err) => res.status(err.status || 502).json({ error: err.message });
+app.get('/api/jobs', async (req, res) => {
+  try { res.json(await listJobs(String(req.query.status || 'pending'))); } catch (err) { siteErr(res, err); }
+});
+app.post('/api/jobs/:id/:action', async (req, res) => {
+  try { res.json(await jobAction(req.params.id, req.params.action, req.body || {})); } catch (err) { siteErr(res, err); }
+});
+app.patch('/api/jobs/:id', async (req, res) => {
+  try { res.json(await updateJob(req.params.id, req.body || {})); } catch (err) { siteErr(res, err); }
+});
+
 app.get('/api/stats', (req, res) => res.json(getStats(Math.min(365, Math.max(1, Number(req.query.days) || 30)))));
 
 app.get('/api/fb-check', async (_req, res) => {
@@ -498,4 +513,5 @@ app.listen(PORT, () => {
   console.log(`Panel Spotted Koszalin działa: http://localhost:${PORT}`);
   console.log(`Facebook: ${fbEnabled() ? 'podłączony' : 'NIE podłączony (tryb demo)'} | AI: ${aiEnabled() ? AI_MODEL : 'brak klucza (tryb demo)'}`);
   startWorkers();
+  startSitePolling();
 });

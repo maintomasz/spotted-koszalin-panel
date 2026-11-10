@@ -111,6 +111,7 @@ async function render() {
     if (tab === 'settings') return renderSettings();
     if (tab === 'conversations') return renderThreads(await api('/api/threads'));
     if (tab === 'mailbox') return mailboxPerson ? renderPerson(mailboxPerson) : renderMailbox();
+    if (tab === 'jobs') return renderJobs();
     const items = await api(`/api/submissions?status=${tab}`);
     if (isInboxTab()) return renderInbox(items);
     return renderList(items);
@@ -1139,3 +1140,132 @@ async function tick() {
   render();
   setInterval(tick, 8000);
 })();
+
+
+// ---------- Praca: ogłoszenia z formularza na spottedkoszalin.pl ----------
+let jobsStatus = 'pending';
+const JOB_TABS = [['pending', '⏳ Czekające'], ['approved', '✅ Opublikowane'], ['expired', '⌛ Wygasłe'], ['rejected', '⛔ Odrzucone'], ['withdrawn', '🗑 Zdjęte']];
+const JOB_REJECT = [
+  'Ogłoszenie nie spełnia zasad strony.',
+  'Brakuje konkretów – podaj stanowisko, stawkę albo zakres obowiązków.',
+  'Ogłoszenie wygląda na podejrzane (np. praca bez danych pracodawcy, „łatwy zarobek”).',
+  'To ogłoszenie już jest na stronie (duplikat).',
+  'To nie jest oferta pracy, tylko reklama lub sprzedaż.',
+];
+const fmtDate = (iso) => iso ? new Date(iso).toLocaleString('pl-PL', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+const nl = (t) => esc(t || '').replace(/\n/g, '<br>');
+
+async function renderJobs() {
+  main.innerHTML = '<div class="empty"><span class="spinner"></span> Ładuję ogłoszenia ze strony…</div>';
+  let data;
+  try {
+    data = await api(`/api/jobs?status=${jobsStatus}`);
+  } catch (err) {
+    main.innerHTML = `<div class="card"><b>Nie mogę pobrać ogłoszeń ze strony.</b><p class="error-text">${esc(err.message)}</p>
+      <p class="stat">Panel łączy się ze stroną spottedkoszalin.pl. Na serwerze panelu muszą być ustawione SITE_API_URL i SITE_API_TOKEN.</p></div>`;
+    return;
+  }
+  const c = data.counts || {};
+  const head = `<div class="job-subtabs">${JOB_TABS.map(([k, l]) => `<button class="chip-btn${k === jobsStatus ? ' on' : ''}" data-jt="${k}">${l}${c[k] ? ` <b>${c[k]}</b>` : ''}</button>`).join('')}</div>`;
+  const empty = { pending: 'Brak ogłoszeń do sprawdzenia 🎉', approved: 'Nic nie jest teraz opublikowane.', expired: 'Brak wygasłych ogłoszeń.', rejected: 'Brak odrzuconych.', withdrawn: 'Brak zdjętych ogłoszeń.' }[jobsStatus];
+  main.innerHTML = head + (data.items.length ? data.items.map(jobCard).join('') : `<div class="empty">${empty}</div>`);
+  const el = $('[data-count="jobs"]'); if (el) el.textContent = c.pending || '';
+
+  main.onclick = async (e) => {
+    const t = e.target.closest('[data-jt]');
+    if (t) { jobsStatus = t.dataset.jt; return renderJobs(); }
+    const a = e.target.closest('[data-ja]');
+    if (!a) return;
+    const card = a.closest('[data-job]');
+    const id = card.dataset.job;
+    const job = data.items.find((x) => String(x.id) === id);
+    const slot = $('.job-slot', card);
+    const act = a.dataset.ja;
+    if (act === 'reject-open') {
+      slot.innerHTML = `<div class="sub-panel"><div class="label"><span>Powód odrzucenia – trafi w mailu do autora</span></div>
+        <div class="qr-row">${JOB_REJECT.map((r, i) => `<button class="chip-btn" data-ja="reason" data-i="${i}">${esc(r)}</button>`).join('')}</div>
+        <textarea class="msg" rows="2" placeholder="Albo wpisz własny powód…"></textarea>
+        <label class="stat"><input type="checkbox" class="notify" checked> wyślij autorowi maila</label>
+        <div class="row"><button class="btn danger grow" data-ja="reject-go">⛔ Odrzuć ogłoszenie</button><button class="btn" data-ja="cancel">Anuluj</button></div></div>`;
+      return;
+    }
+    if (act === 'reason') { $('.msg', card).value = JOB_REJECT[Number(a.dataset.i)]; return; }
+    if (act === 'cancel') { slot.innerHTML = ''; return; }
+    if (act === 'edit-open') { slot.innerHTML = jobEditForm(job); return; }
+    const run = (fn, msg) => act1(a, async () => { await fn(); toast(msg); await refreshStatus().catch(() => {}); renderJobs(); });
+    if (act === 'approve') return run(() => api(`/api/jobs/${id}/approve`, { body: { days: Number($('.days', card)?.value || job.duration_days) } }), '✅ Opublikowano – autor dostał maila');
+    if (act === 'reject-go') return run(() => api(`/api/jobs/${id}/reject`, { body: { reason: $('.msg', card).value, notify: $('.notify', card).checked } }), '⛔ Odrzucono');
+    if (act === 'extend') return run(() => api(`/api/jobs/${id}/extend`, { body: { days: Number(a.dataset.days || 7) } }), `➕ Przedłużono o ${a.dataset.days || 7} dni`);
+    if (act === 'unpublish') {
+      if (!confirm('Zdjąć ogłoszenie ze strony?')) return;
+      return run(() => api(`/api/jobs/${id}/unpublish`, { body: {} }), '🗑 Zdjęto ze strony');
+    }
+    if (act === 'save') {
+      const f = {};
+      card.querySelectorAll('[data-f]').forEach((i) => { f[i.dataset.f] = i.type === 'checkbox' ? i.checked : (i.value.trim() === '' ? null : i.value.trim()); });
+      return run(() => api(`/api/jobs/${id}`, { method: 'PATCH', body: f }), '💾 Zapisano zmiany');
+    }
+  };
+}
+
+function jobCard(j) {
+  const offer = j.type === 'offer';
+  const extra = offer
+    ? [j.company_bio && `<div class="label"><span>O firmie</span></div><div class="original">${nl(j.company_bio)}</div>`,
+       j.requirements && `<div class="label"><span>Wymagania</span></div><div class="original">${nl(j.requirements)}</div>`,
+       j.benefits && `<div class="label"><span>Oferujemy</span></div><div class="original">${nl(j.benefits)}</div>`].filter(Boolean).join('')
+    : [j.experience && `<div class="label"><span>Doświadczenie</span></div><div class="original">${nl(j.experience)}</div>`,
+       (j.availability || j.driving_license) && `<p class="stat">${j.availability ? `Dostępność: <b>${esc(j.availability)}</b>` : ''}${j.availability && j.driving_license ? ' · ' : ''}${j.driving_license ? `Prawo jazdy: <b>${esc(j.driving_license)}</b>` : ''}</p>`].filter(Boolean).join('');
+  const expired = j.is_expired || j.status === 'expired';
+  let actions = '';
+  if (j.status === 'pending' || j.status === 'rejected' || j.status === 'withdrawn') {
+    actions = `<select class="days" title="Czas widoczności">${[7, 14, 30].map((d) => `<option value="${d}"${d === j.duration_days ? ' selected' : ''}>${d} dni${d === j.duration_days ? ' (wybór autora)' : ''}</option>`).join('')}</select>
+      <button class="btn primary" data-ja="approve">✅ Zatwierdź i opublikuj</button>
+      <button class="btn" data-ja="edit-open">✏️ Edytuj</button>
+      ${j.status === 'pending' ? '<button class="btn danger" data-ja="reject-open">⛔ Odrzuć</button>' : ''}`;
+  } else if (j.status === 'approved' && !expired) {
+    actions = `<a class="btn" href="${esc(j.url)}" target="_blank" rel="noopener">👁 Zobacz na stronie ↗</a>
+      <button class="btn" data-ja="extend" data-days="7">➕ Przedłuż o 7 dni</button>
+      <button class="btn" data-ja="edit-open">✏️ Edytuj</button>
+      <button class="btn danger" data-ja="unpublish">🗑 Zdejmij</button>`;
+  } else {
+    actions = `<button class="btn primary" data-ja="extend" data-days="7">↩︎ Przywróć na 7 dni</button>
+      <button class="btn" data-ja="extend" data-days="14">na 14 dni</button><button class="btn" data-ja="extend" data-days="30">na 30 dni</button>
+      <button class="btn" data-ja="edit-open">✏️ Edytuj</button>`;
+  }
+  const when = j.status === 'pending' ? `wysłane ${fmtDate(j.created_at)} · autor wybrał <b>${j.duration_days} dni</b>`
+    : j.status === 'approved' ? `opublikowane ${fmtDate(j.published_at)} · ${expired ? '<b>wygasło</b>' : `ważne do <b>${fmtDate(j.expires_at)}</b>`}`
+    : j.status === 'expired' ? `wygasło ${fmtDate(j.expires_at)}` : `${esc(j.status_label)}`;
+  return `<div class="card job" data-job="${j.id}">
+    <div class="meta"><span class="badge ${offer ? 'v-commercial' : 'v-conversation'}">${offer ? '💼 Oferuję pracę' : '🙋 Szukam pracy'}</span>${j.industry ? `<span class="chip">${esc(j.industry)}</span>` : ''}<span>${when}</span></div>
+    <div class="job-head">${j.logo_url ? `<img src="${esc(j.logo_url)}" alt="" class="job-logo">` : ''}
+      <div><div class="job-title">${esc(j.title)}</div><div class="stat">${esc((offer ? j.company_name : j.person_name) || '')}${j.location ? ` · ${esc(j.location)}` : ''}</div></div></div>
+    <div class="job-facts-p"><span>💰 <b>${esc(j.rate_label)}</b></span>${j.work_time ? `<span>${esc(j.work_time)}</span>` : ''}${j.contract ? `<span>${esc(j.contract)}</span>` : ''}</div>
+    <div class="label"><span>${offer ? 'Opis stanowiska' : 'O sobie'}</span></div><div class="original">${nl(j.description)}</div>
+    ${extra}
+    <div class="job-contact-p">${j.phone ? `📞 ${esc(j.phone)}` : ''}${j.contact_email ? `${j.phone ? ' · ' : ''}✉️ ${esc(j.contact_email)}` : ''}${!j.phone && !j.contact_email ? '<span class="error-text">brak kontaktu!</span>' : ''}
+      <span class="stat">· powiadomienia: ${esc(j.notify_email)}</span></div>
+    ${j.reject_reason && j.status === 'rejected' ? `<div class="notice">Powód odrzucenia: ${esc(j.reject_reason)}</div>` : ''}
+    <div class="actions">${actions}</div>
+    <div class="job-slot"></div>
+  </div>`;
+}
+
+function jobEditForm(j) {
+  const offer = j.type === 'offer';
+  const inp = (f, label, v, t = 'text') => `<label class="jf"><span>${label}</span><input type="${t}" data-f="${f}" value="${esc(v ?? '')}"></label>`;
+  const ta = (f, label, v, rows = 3) => `<label class="jf"><span>${label}</span><textarea data-f="${f}" rows="${rows}">${esc(v ?? '')}</textarea></label>`;
+  return `<div class="sub-panel job-edit">
+    ${inp('title', offer ? 'Stanowisko' : 'Jakiej pracy szuka', j.title)}
+    <div class="jf-row">${inp('industry', 'Branża', j.industry)}${inp('location', 'Miejsce', j.location)}</div>
+    <div class="jf-row">${inp('work_time', 'Wymiar', j.work_time)}${inp('contract', 'Umowa', j.contract)}</div>
+    <div class="jf-row">${inp('rate_min', 'Stawka od (zł/h)', j.rate_min, 'number')}${inp('rate_max', 'Stawka do (zł/h)', j.rate_max, 'number')}
+      <label class="jf jf-chk"><input type="checkbox" data-f="rate_negotiable"${j.rate_negotiable ? ' checked' : ''}> do uzgodnienia</label></div>
+    ${ta('description', 'Opis', j.description, 5)}
+    ${offer ? `${inp('company_name', 'Nazwa firmy', j.company_name)}${ta('company_bio', 'O firmie', j.company_bio)}${ta('requirements', 'Wymagania', j.requirements)}${ta('benefits', 'Oferujemy', j.benefits)}
+      ${j.logo_url ? '<label class="jf jf-chk"><input type="checkbox" data-f="remove_logo"> usuń logo</label>' : ''}`
+      : `${inp('person_name', 'Imię / pseudonim', j.person_name)}${ta('experience', 'Doświadczenie', j.experience)}<div class="jf-row">${inp('availability', 'Dostępność', j.availability)}${inp('driving_license', 'Prawo jazdy', j.driving_license)}</div>`}
+    <div class="jf-row">${inp('phone', 'Telefon (widoczny)', j.phone)}${inp('contact_email', 'E-mail (widoczny)', j.contact_email, 'email')}</div>
+    <div class="row"><button class="btn primary grow" data-ja="save">💾 Zapisz zmiany</button><button class="btn" data-ja="cancel">Anuluj</button></div>
+  </div>`;
+}
